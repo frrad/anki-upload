@@ -18,11 +18,8 @@ class MessageAdd(betterproto.Message):
 
 @dataclass(eq=False, repr=False)
 class Message(betterproto.Message):
-
     fields: list[str] = betterproto.string_field(1)
-
     tags: str = betterproto.string_field(2)
-
     add: MessageAdd = betterproto.message_field(3)
 
 
