@@ -1,0 +1,21 @@
+tags: rl policy-gradients
+Given the trajectory probability
+\( P(\tau|\theta) = \rho_0(s_0) \prod_{t=0}^T P(s_{t+1}|s_t, a_t) \pi_\theta(a_t|s_t) \),
+
+the log-derivative trick says:
+
+\[
+\nabla_\theta P(\tau|\theta) = \, ???
+\]
+---
+\[
+\nabla_\theta P(\tau|\theta) = P(\tau|\theta) \, \nabla_\theta \log P(\tau|\theta)
+\]
+===
+A card with no tags line. Content is taken verbatim, so backslashes,
+quotes ("like these"), and blank lines all survive untouched:
+
+    def f(x):
+        return x ** 2
+---
+Nothing here needs escaping.
