@@ -23,7 +23,7 @@ import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List
+from typing import Callable, Dict, List
 
 from anki import (
     SESSION_PATH,
@@ -360,8 +360,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: List[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # argparse.Namespace attributes are Any; pin the handler's real signature.
+    handler: Callable[[argparse.Namespace], int] = args.func
     try:
-        return args.func(args)
+        return handler(args)
     except (AnkiError, ValueError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 1
