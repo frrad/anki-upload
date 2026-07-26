@@ -1,6 +1,7 @@
-"""CLI for reading and editing AnkiWeb notes.
+"""CLI for reading, editing and bulk-adding AnkiWeb notes.
 
     ./venv/bin/python main.py login
+    ./venv/bin/python main.py import examples/cards.txt
     ./venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
     ./venv/bin/python main.py update https://ankiuser.net/edit/1758491540484 \
         --set Back='<div>np.argwhere(cond)</div>' --tags numpy
@@ -20,6 +21,8 @@ import argparse
 import getpass
 import os
 import sys
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Dict, List
 
 from anki import (
@@ -36,6 +39,9 @@ from anki import (
     update_note,
 )
 
+CARD_SEPARATOR = "==="
+SIDE_SEPARATOR = "---"
+
 
 def _parse_assignments(pairs: List[str]) -> Dict[str, str]:
     out: Dict[str, str] = {}
@@ -45,6 +51,140 @@ def _parse_assignments(pairs: List[str]) -> Dict[str, str]:
             raise SystemExit(f"expected NAME=VALUE, got {pair!r}")
         out[name.strip()] = value
     return out
+
+
+# --------------------------------------------------------------------------
+# cards file
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class Card:
+    front: str
+    back: str
+    tags: str | None = None
+
+
+def _split_on(text: str, separator: str) -> List[str]:
+    """Split text into chunks on lines consisting solely of `separator`."""
+    chunks: List[List[str]] = [[]]
+    for line in text.splitlines():
+        if line.strip() == separator:
+            chunks.append([])
+        else:
+            chunks[-1].append(line)
+    return ["\n".join(chunk) for chunk in chunks]
+
+
+def parse_card(block: str, index: int) -> Card:
+    lines = block.splitlines()
+
+    tags = None
+    if lines and lines[0].strip().lower().startswith("tags:"):
+        tags = lines[0].split(":", 1)[1].strip() or None
+        lines = lines[1:]
+
+    sides = _split_on("\n".join(lines), SIDE_SEPARATOR)
+    if len(sides) != 2:
+        raise ValueError(
+            f"card {index}: expected exactly one {SIDE_SEPARATOR!r} separator, "
+            f"found {len(sides) - 1}"
+        )
+
+    front, back = (side.strip() for side in sides)
+    if not front or not back:
+        raise ValueError(f"card {index}: front and back must both be non-empty")
+
+    return Card(front=front, back=back, tags=tags)
+
+
+def parse_cards(text: str) -> List[Card]:
+    """Parse a cards file.
+
+    Cards are separated by a line of `===`, the front and back of each card by a
+    line of `---`. Content is taken verbatim, so no escaping is needed. A card
+    may start with a `tags: foo bar` line; to begin a front with a literal
+    "tags:", precede it with a blank line.
+    """
+    cards = []
+    for index, block in enumerate(_split_on(text, CARD_SEPARATOR), start=1):
+        if not block.strip():
+            continue
+        cards.append(parse_card(block, index))
+    return cards
+
+
+def read_cards_file(path: Path) -> str:
+    if str(path) == "-":
+        return sys.stdin.read()
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise SystemExit(f"could not read {path}: {e}")
+
+
+def require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise SystemExit(f"{name} is not set (put it in .env)")
+    return value
+
+
+# --------------------------------------------------------------------------
+# commands
+# --------------------------------------------------------------------------
+
+
+def _field_order(notetype_id: int) -> List[str] | None:
+    """Field names for `notetype_id`, or None if the server won't tell us.
+
+    get-info-for-adding only reports fields for the *current* notetype, so
+    anything else has to fall back to positional order.
+    """
+    info = get_decks_and_notetypes()
+    if notetype_id != info.current_notetype_id:
+        return None
+    return [f.name for f in sorted(info.fields, key=lambda f: f.ord.val)]
+
+
+def cmd_import(args: argparse.Namespace) -> int:
+    try:
+        cards = parse_cards(read_cards_file(args.cards_file))
+    except ValueError as e:
+        raise SystemExit(str(e))
+
+    if not cards:
+        raise SystemExit(f"no cards found in {args.cards_file}")
+
+    if args.dry_run:
+        for index, card in enumerate(cards, start=1):
+            print(f"--- card {index} (tags: {card.tags or 'none'}) ---")
+            print(f"front: {card.front}")
+            print(f"back: {card.back}")
+        print(f"{len(cards)} card(s) parsed, nothing uploaded")
+        return 0
+
+    deck_id = args.deck_id or int(require_env("ANKIWEB_DECK_ID"))
+    notetype_id = args.notetype_id or int(require_env("ANKIWEB_NOTETYPE_ID"))
+
+    # Pad front/back out to the notetype's real field count where we can, so
+    # notetypes with more than two fields do not get their tail blanked.
+    order = _field_order(notetype_id)
+    width = max(len(order), 2) if order else 2
+
+    failures = 0
+    for index, card in enumerate(cards, start=1):
+        values = [card.front, card.back] + [""] * (width - 2)
+        try:
+            add_note(values, deck_id, notetype_id, card.tags or "")
+            print(f"card {index}/{len(cards)}: ok")
+        except AnkiError as e:
+            print(f"card {index}/{len(cards)}: FAILED {e}", file=sys.stderr)
+            failures += 1
+
+    if failures:
+        print(f"{failures} of {len(cards)} card(s) failed", file=sys.stderr)
+    return 1 if failures else 0
 
 
 def cmd_get(args: argparse.Namespace) -> int:
@@ -84,13 +224,7 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
 
     named = _parse_assignments(args.field or [])
-    info = get_decks_and_notetypes()
-    if int(notetype_id) == info.current_notetype_id:
-        order = [f.name for f in sorted(info.fields, key=lambda f: f.ord.val)]
-    else:
-        # get-info-for-adding only returns fields for the current notetype,
-        # so fall back to the order the values were given on the command line.
-        order = list(named)
+    order = _field_order(int(notetype_id)) or list(named)
 
     unknown = set(named) - set(order)
     if unknown:
@@ -151,6 +285,34 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="command", required=True)
 
+    i = sub.add_parser(
+        "import",
+        help="bulk-add cards from a cards file",
+        epilog=(
+            f"Cards are separated by a line of {CARD_SEPARATOR!r}, front and back "
+            f"by a line of {SIDE_SEPARATOR!r}. Content is used verbatim."
+        ),
+    )
+    i.add_argument(
+        "cards_file",
+        type=Path,
+        help="file containing the cards to add, or - to read stdin",
+    )
+    i.add_argument(
+        "--deck-id", type=int, help="override ANKIWEB_DECK_ID from the environment"
+    )
+    i.add_argument(
+        "--notetype-id",
+        type=int,
+        help="override ANKIWEB_NOTETYPE_ID from the environment",
+    )
+    i.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="parse and print the cards without uploading them",
+    )
+    i.set_defaults(func=cmd_import)
+
     g = sub.add_parser("get", help="print a note")
     g.add_argument("note", help="note id or https://ankiuser.net/edit/<id> URL")
     g.set_defaults(func=cmd_get)
@@ -166,7 +328,7 @@ def build_parser() -> argparse.ArgumentParser:
     u.add_argument("--tags", help="replace the note's tags (space separated)")
     u.set_defaults(func=cmd_update)
 
-    a = sub.add_parser("add", help="create a note")
+    a = sub.add_parser("add", help="create a single note")
     a.add_argument(
         "--field",
         action="append",
