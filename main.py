@@ -1,32 +1,61 @@
+"""CLI for reading, editing and bulk-adding AnkiWeb notes.
+
+    ./venv/bin/python main.py login
+    ./venv/bin/python main.py import examples/cards.txt
+    ./venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
+    ./venv/bin/python main.py update https://ankiuser.net/edit/1758491540484 \
+        --set Back='<div>np.argwhere(cond)</div>' --tags numpy
+    ./venv/bin/python main.py add --field Front=hello --field Back=world
+    ./venv/bin/python main.py search 'deck:"ml 2025" tag:numpy'
+    ./venv/bin/python main.py decks
+
+Auth resolves in this order: the cached session file, then
+ANKIWEB_USERNAME/ANKIWEB_PASSWORD from .env (logging in automatically and
+renewing on expiry), then a bare ANKIWEB_AUTH cookie. The last is the
+legacy path and only reaches the ankiuser.net editor endpoints, not search.
+"""
+
 from __future__ import annotations
 
 import argparse
+import getpass
 import os
 import sys
-from dotenv import load_dotenv
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
-import betterproto
-import requests
+from typing import Dict, List
 
-load_dotenv()
+from anki import (
+    SESSION_PATH,
+    AnkiError,
+    add_note,
+    get_decks_and_notetypes,
+    get_note,
+    login,
+    logout,
+    parse_note_id,
+    search_notes,
+    set_session,
+    update_note,
+)
 
 CARD_SEPARATOR = "==="
 SIDE_SEPARATOR = "---"
 
 
-@dataclass(eq=False, repr=False)
-class MessageAdd(betterproto.Message):
-    deck_id: int = betterproto.int64_field(1)
-    notetype_id: int = betterproto.int64_field(2)
+def _parse_assignments(pairs: List[str]) -> Dict[str, str]:
+    out: Dict[str, str] = {}
+    for pair in pairs:
+        name, sep, value = pair.partition("=")
+        if not sep:
+            raise SystemExit(f"expected NAME=VALUE, got {pair!r}")
+        out[name.strip()] = value
+    return out
 
 
-@dataclass(eq=False, repr=False)
-class Message(betterproto.Message):
-    fields: list[str] = betterproto.string_field(1)
-    tags: str = betterproto.string_field(2)
-    add: MessageAdd = betterproto.message_field(3)
+# --------------------------------------------------------------------------
+# cards file
+# --------------------------------------------------------------------------
 
 
 @dataclass
@@ -85,57 +114,6 @@ def parse_cards(text: str) -> List[Card]:
     return cards
 
 
-def build_payload(
-    front: str, back: str, deck_id: int, notetype_id: int, tags: str | None = None
-) -> bytes:
-    """General builder for arbitrary inputs."""
-    msg = Message()
-    msg.fields = [front, back]
-    if tags:
-        msg.tags = tags
-    msg.add = MessageAdd()
-    msg.add.deck_id = int(deck_id)
-    msg.add.notetype_id = int(notetype_id)
-    return bytes(msg)
-
-
-def post_anki(payload: bytes, auth: str) -> Tuple[int, str]:
-    url = "https://ankiuser.net/svc/editor/add-or-update"
-    headers: Dict[str, str] = {
-        "accept": "*/*",
-        "accept-language": "en-US,en;q=0.9",
-        "cache-control": "no-cache",
-        "content-type": "application/octet-stream",
-        "origin": "https://ankiuser.net",
-        "pragma": "no-cache",
-        "priority": "u=1, i",
-        "referer": "https://ankiuser.net/add",
-        "sec-ch-ua": '"Not;A=Brand";v="99", "Google Chrome";v="139", "Chromium";v="139"',
-        "sec-ch-ua-mobile": "?0",
-        "sec-ch-ua-platform": '"Chrome OS"',
-        "sec-fetch-dest": "empty",
-        "sec-fetch-mode": "cors",
-        "sec-fetch-site": "same-origin",
-        "user-agent": (
-            "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
-        ),
-    }
-    cookies: Dict[str, str] = {
-        "has_auth": "1",
-        "ankiweb": auth,
-    }
-    r = requests.post(url, headers=headers, cookies=cookies, data=payload)
-    return r.status_code, r.text
-
-
-def require_env(name: str) -> str:
-    value = os.getenv(name)
-    if not value:
-        raise SystemExit(f"{name} is not set (put it in .env)")
-    return value
-
-
 def read_cards_file(path: Path) -> str:
     if str(path) == "-":
         return sys.stdin.read()
@@ -145,38 +123,31 @@ def read_cards_file(path: Path) -> str:
         raise SystemExit(f"could not read {path}: {e}")
 
 
-def parse_args(argv: List[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Add cards to AnkiWeb from a text file.",
-        epilog=(
-            f"Cards are separated by a line of {CARD_SEPARATOR!r}, front and back "
-            f"by a line of {SIDE_SEPARATOR!r}. Content is used verbatim."
-        ),
-    )
-    parser.add_argument(
-        "cards_file",
-        type=Path,
-        help="file containing the cards to add, or - to read stdin",
-    )
-    parser.add_argument(
-        "--deck-id", type=int, help="override ANKIWEB_DECK_ID from the environment"
-    )
-    parser.add_argument(
-        "--notetype-id",
-        type=int,
-        help="override ANKIWEB_NOTETYPE_ID from the environment",
-    )
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="parse and print the cards without uploading them",
-    )
-    return parser.parse_args(argv)
+def require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise SystemExit(f"{name} is not set (put it in .env)")
+    return value
 
 
-def main(argv: List[str] | None = None) -> int:
-    args = parse_args(argv)
+# --------------------------------------------------------------------------
+# commands
+# --------------------------------------------------------------------------
 
+
+def _field_order(notetype_id: int) -> List[str] | None:
+    """Field names for `notetype_id`, or None if the server won't tell us.
+
+    get-info-for-adding only reports fields for the *current* notetype, so
+    anything else has to fall back to positional order.
+    """
+    info = get_decks_and_notetypes()
+    if notetype_id != info.current_notetype_id:
+        return None
+    return [f.name for f in sorted(info.fields, key=lambda f: f.ord.val)]
+
+
+def cmd_import(args: argparse.Namespace) -> int:
     try:
         cards = parse_cards(read_cards_file(args.cards_file))
     except ValueError as e:
@@ -195,20 +166,20 @@ def main(argv: List[str] | None = None) -> int:
 
     deck_id = args.deck_id or int(require_env("ANKIWEB_DECK_ID"))
     notetype_id = args.notetype_id or int(require_env("ANKIWEB_NOTETYPE_ID"))
-    auth = require_env("ANKIWEB_AUTH")
+
+    # Pad front/back out to the notetype's real field count where we can, so
+    # notetypes with more than two fields do not get their tail blanked.
+    order = _field_order(notetype_id)
+    width = max(len(order), 2) if order else 2
 
     failures = 0
     for index, card in enumerate(cards, start=1):
-        payload = build_payload(
-            front=card.front,
-            back=card.back,
-            deck_id=deck_id,
-            notetype_id=notetype_id,
-            tags=card.tags,
-        )
-        status, body = post_anki(payload, auth)
-        print(f"card {index}/{len(cards)}: {status} {body}")
-        if status != 200:
+        values = [card.front, card.back] + [""] * (width - 2)
+        try:
+            add_note(values, deck_id, notetype_id, card.tags or "")
+            print(f"card {index}/{len(cards)}: ok")
+        except AnkiError as e:
+            print(f"card {index}/{len(cards)}: FAILED {e}", file=sys.stderr)
             failures += 1
 
     if failures:
@@ -216,5 +187,185 @@ def main(argv: List[str] | None = None) -> int:
     return 1 if failures else 0
 
 
+def cmd_get(args: argparse.Namespace) -> int:
+    note = get_note(parse_note_id(args.note))
+    print(f"note {note.note_id}  {note.url}")
+    print(f"tags: {note.tags or '(none)'}")
+    for name, value in zip(note.field_names, note.field_values):
+        print(f"\n--- {name} ---")
+        print(value)
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    note_id = parse_note_id(args.note)
+    changes = _parse_assignments(args.set or [])
+    if not changes and args.tags is None:
+        raise SystemExit("nothing to do: pass --set NAME=VALUE and/or --tags")
+
+    before = get_note(note_id)
+    note = update_note(note_id, changes, args.tags)
+
+    print(f"updated note {note.note_id}  {note.url}")
+    for name, old, new in zip(note.field_names, before.field_values, note.field_values):
+        if old != new:
+            print(f"  {name}: {old!r} -> {new!r}")
+    if before.tags != note.tags:
+        print(f"  tags: {before.tags!r} -> {note.tags!r}")
+    return 0
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    deck_id = args.deck_id or os.getenv("ANKIWEB_DECK_ID")
+    notetype_id = args.notetype_id or os.getenv("ANKIWEB_NOTETYPE_ID")
+    if not deck_id or not notetype_id:
+        raise SystemExit(
+            "need --deck-id/--notetype-id or ANKIWEB_DECK_ID/ANKIWEB_NOTETYPE_ID"
+        )
+
+    named = _parse_assignments(args.field or [])
+    order = _field_order(int(notetype_id)) or list(named)
+
+    unknown = set(named) - set(order)
+    if unknown:
+        raise SystemExit(f"unknown field(s) {sorted(unknown)}; available: {order}")
+
+    values = [named.get(name, "") for name in order]
+    add_note(values, int(deck_id), int(notetype_id), args.tags or "")
+    print(f"added note to deck {deck_id} with fields {order}")
+    return 0
+
+
+def cmd_login(args: argparse.Namespace) -> int:
+    username = (
+        args.username or os.getenv("ANKIWEB_USERNAME") or input("AnkiWeb email: ")
+    )
+    password = os.getenv("ANKIWEB_PASSWORD") or getpass.getpass("Password: ")
+
+    session = login(username, password)
+    set_session(session)
+    session.save()
+    print(f"logged in as {session.username}; session saved to {SESSION_PATH}")
+    print("  ankiweb.net cookie:  " + ("yes" if session.ankiweb_cookie else "no"))
+    print("  ankiuser.net cookie: " + ("yes" if session.ankiuser_cookie else "no"))
+    return 0
+
+
+def cmd_logout(args: argparse.Namespace) -> int:
+    print("session removed" if logout() else "no stored session")
+    return 0
+
+
+def cmd_search(args: argparse.Namespace) -> int:
+    notes = search_notes(args.query)
+    if not notes:
+        print("no matches")
+        return 0
+    for n in notes:
+        preview = " ".join(n.joined_fields.split())[: args.width]
+        print(f"{n.note_id}  {preview}")
+    print(f"\n{len(notes)} note(s)")
+    return 0
+
+
+def cmd_decks(args: argparse.Namespace) -> int:
+    info = get_decks_and_notetypes()
+    print("NOTETYPES:")
+    for n in info.notetypes:
+        mark = " *" if n.id == info.current_notetype_id else ""
+        print(f"  {n.id}  {n.name}{mark}")
+    print("\nDECKS:")
+    for d in info.decks:
+        mark = " *" if d.id == info.current_deck_id else ""
+        print(f"  {d.id}  {d.name}{mark}")
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    sub = p.add_subparsers(dest="command", required=True)
+
+    i = sub.add_parser(
+        "import",
+        help="bulk-add cards from a cards file",
+        epilog=(
+            f"Cards are separated by a line of {CARD_SEPARATOR!r}, front and back "
+            f"by a line of {SIDE_SEPARATOR!r}. Content is used verbatim."
+        ),
+    )
+    i.add_argument(
+        "cards_file",
+        type=Path,
+        help="file containing the cards to add, or - to read stdin",
+    )
+    i.add_argument(
+        "--deck-id", type=int, help="override ANKIWEB_DECK_ID from the environment"
+    )
+    i.add_argument(
+        "--notetype-id",
+        type=int,
+        help="override ANKIWEB_NOTETYPE_ID from the environment",
+    )
+    i.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="parse and print the cards without uploading them",
+    )
+    i.set_defaults(func=cmd_import)
+
+    g = sub.add_parser("get", help="print a note")
+    g.add_argument("note", help="note id or https://ankiuser.net/edit/<id> URL")
+    g.set_defaults(func=cmd_get)
+
+    u = sub.add_parser("update", help="edit fields of an existing note")
+    u.add_argument("note", help="note id or https://ankiuser.net/edit/<id> URL")
+    u.add_argument(
+        "--set",
+        action="append",
+        metavar="NAME=VALUE",
+        help="set a field by name; repeatable. Unset fields keep their value.",
+    )
+    u.add_argument("--tags", help="replace the note's tags (space separated)")
+    u.set_defaults(func=cmd_update)
+
+    a = sub.add_parser("add", help="create a single note")
+    a.add_argument(
+        "--field",
+        action="append",
+        metavar="NAME=VALUE",
+        help="set a field by name; repeatable",
+    )
+    a.add_argument("--deck-id", help="defaults to $ANKIWEB_DECK_ID")
+    a.add_argument("--notetype-id", help="defaults to $ANKIWEB_NOTETYPE_ID")
+    a.add_argument("--tags", help="tags (space separated)")
+    a.set_defaults(func=cmd_add)
+
+    d = sub.add_parser("decks", help="list decks and notetypes")
+    d.set_defaults(func=cmd_decks)
+
+    li = sub.add_parser("login", help="authenticate and cache a session")
+    li.add_argument("--username", help="defaults to $ANKIWEB_USERNAME, else prompts")
+    li.set_defaults(func=cmd_login)
+
+    lo = sub.add_parser("logout", help="delete the cached session")
+    lo.set_defaults(func=cmd_logout)
+
+    s = sub.add_parser("search", help="find notes (Anki search syntax)")
+    s.add_argument("query", help="e.g. 'deck:\"ml 2025\" tag:foo'")
+    s.add_argument("--width", type=int, default=90, help="preview width")
+    s.set_defaults(func=cmd_search)
+
+    return p
+
+
+def main(argv: List[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        return args.func(args)
+    except (AnkiError, ValueError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
