@@ -23,8 +23,9 @@ import os
 import re
 import stat
 from dataclasses import dataclass, asdict
+from http.cookiejar import CookieJar
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import betterproto
 import requests
@@ -186,7 +187,7 @@ class Session:
             return None
 
 
-def _cookie_from_jar(jar, host: str) -> str:
+def _cookie_from_jar(jar: CookieJar, host: str) -> str:
     """Pull the `ankiweb` cookie scoped to `host` out of a requests cookie jar."""
     hostname = host.split("//", 1)[-1]
     for c in jar:
@@ -248,7 +249,7 @@ def login(username: str, password: str) -> Session:
     )
 
 
-def _credentials() -> Optional[tuple]:
+def _credentials() -> Optional[Tuple[str, str]]:
     user = os.getenv("ANKIWEB_USERNAME")
     password = os.getenv("ANKIWEB_PASSWORD")
     return (user, password) if user and password else None
@@ -327,11 +328,13 @@ def _post(path: str, payload: bytes, host: str = ANKIUSER, referer: str = "/") -
             timeout=TIMEOUT_S,
         )
 
-        if r.status_code == 403 and attempt == 1 and _credentials():
-            # Cookie expired; log in again and retry once.
-            set_session(login(*_credentials()))
-            get_session().save()
-            continue
+        if r.status_code == 403 and attempt == 1:
+            creds = _credentials()
+            if creds is not None:
+                # Cookie expired; log in again and retry once.
+                set_session(login(*creds))
+                get_session().save()
+                continue
 
         if r.status_code == 403:
             raise AnkiAuthError(
