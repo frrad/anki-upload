@@ -22,17 +22,30 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 from anki import get_note, parse_note_id, update_note  # noqa: E402
 
-DIV_RE = re.compile(r"<div[^>]*>(.*?)</div>", re.I | re.S)
+OPEN_DIV_RE = re.compile(r"<div[^>]*>", re.I)
 BR_RE = re.compile(r"<br\s*/?>", re.I)
+# A <br> that only fills out its enclosing div, rather than opening a line.
+TRAILING_BR_RE = re.compile(r"<br\s*/?>\s*(?=</div>)", re.I)
 TAG_RE = re.compile(r"<[^>]+>")
 INLINE_MATH_RE = re.compile(r"\\\((.*?)\\\)", re.S)
 DISPLAY_MATH_RE = re.compile(r"\\\[(.*?)\\\]", re.S)
+# A real HTML entity, not a bare "&" -- inside an `aligned` environment "&" is
+# the LaTeX alignment marker and is perfectly legitimate.
+ENTITY_RE = re.compile(r"&(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#[xX][0-9a-fA-F]+);")
 
 
 def to_lines(field: str) -> List[str]:
-    """Field HTML -> plain text lines, tolerating the web editor's stray divs."""
-    s = BR_RE.sub("\n", field)
-    s = DIV_RE.sub(lambda m: "\n" + m.group(1), s)  # a div opens a new line
+    """Field HTML -> plain text lines, tolerating the web editor's stray divs.
+
+    A <br> immediately before </div> fills out the div rather than opening
+    another line -- a browser renders <div><br></div> as one blank line, not
+    two -- so it is absorbed before <br> is treated as a line separator.
+    Only the opening <div> is a line boundary; the closing tag is not, or
+    every div would be followed by a spurious blank line.
+    """
+    s = TRAILING_BR_RE.sub("", field)
+    s = BR_RE.sub("\n", s)
+    s = OPEN_DIV_RE.sub("\n", s)
     s = TAG_RE.sub("", s)
     s = s.replace("&nbsp;", " ")
     s = html.unescape(s)
@@ -61,7 +74,7 @@ def check(name: str, value: str) -> None:
         for span in pattern.findall(value):
             if TAG_RE.search(span):
                 raise SystemExit(f"{name}: HTML tag inside {kind} math: {span!r}")
-            if "&" in span or "\xa0" in span:
+            if ENTITY_RE.search(span) or "\xa0" in span:
                 raise SystemExit(f"{name}: entity inside {kind} math: {span!r}")
     if "\xa0" in value or "&nbsp;" in value:
         raise SystemExit(f"{name}: non-breaking space survived")

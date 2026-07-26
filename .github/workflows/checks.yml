@@ -1,4 +1,4 @@
-name: mypy
+name: checks
 
 on:
   push:
@@ -7,14 +7,14 @@ on:
 
 # A newer push to the same PR makes the in-flight run irrelevant.
 concurrency:
-  group: mypy-${{ github.ref }}
+  group: checks-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  typecheck:
+  checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,3 +35,6 @@ jobs:
 
       - name: Type check
         run: mypy --config-file mypy.ini
+
+      - name: Tests
+        run: pytest tests -v
