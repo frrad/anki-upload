@@ -1,4 +1,4 @@
-"""Tests for the fix-latex skill's normalizer.
+"""Tests for the anki-notes skill's normalizer.
 
 The guard in check() is the interesting part: it decides whether a field is
 safe to write, so a false positive blocks a legitimate repair and a false

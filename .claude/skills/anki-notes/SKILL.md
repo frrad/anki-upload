@@ -1,9 +1,9 @@
 ---
-name: fix-latex
-description: "Convert an AnkiWeb note's math to LaTeX that actually renders, and normalize its field markup. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-only format that satisfies both."
+name: anki-notes
+description: "Edit AnkiWeb notes: convert their math to LaTeX that actually renders, normalize field markup, and follow the house style for card content. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, when a card's lines run together on one line after editing, or when writing or rewording a card's fields. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-only format that satisfies both."
 ---
 
-# Fixing LaTeX rendering in AnkiWeb notes
+# Editing AnkiWeb notes
 
 ## The core problem
 
@@ -60,6 +60,22 @@ get right:
   `\mathrm{mean}` or `\operatorname{mean}`.
 - The Unicode `ε` is `\varepsilon`; `\epsilon` is the lunate `ϵ`. Either is
   defensible in ML notation -- pick one and say which.
+- The expectation operator is `\mathbb{E}`, not a bare `E` (which renders as
+  an italic variable). This needs the AMS fonts extension in the MathJax
+  config; `\operatorname{E}` is the fallback if it is unavailable.
+
+## Card writing style
+
+Fixing a card's markup is not licence to rewrite it. Keep these separate:
+
+- **Do not change field content while fixing formatting.** Converting
+  pseudo-math to LaTeX preserves meaning and is in scope. Rewording a
+  prompt, adding facts, or restructuring an answer is a content change --
+  propose it and get agreement first, as a separate step.
+- **Prefer a short front.** A few words are enough when a few words
+  suffice; do not pad a prompt into a full sentence or a wall of text for
+  its own sake. A bare topic name like `Jensen's inequality` is a
+  legitimate front, not a defect to be fixed.
 
 ## Procedure
 
@@ -71,8 +87,8 @@ get right:
    (dry run first):
 
    ```sh
-   python .claude/skills/fix-latex/normalize.py <url-or-id>
-   python .claude/skills/fix-latex/normalize.py <url-or-id> --apply
+   python .claude/skills/anki-notes/normalize.py <url-or-id>
+   python .claude/skills/anki-notes/normalize.py <url-or-id> --apply
    ```
 
 4. **Verify** by reading the note back and diffing against the saved copy.

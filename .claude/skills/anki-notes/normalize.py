@@ -4,8 +4,8 @@ Anki renders fields as HTML, so a literal newline collapses; MathJax needs
 each \\( ... \\) span to be one unbroken run of text. <br> as the only markup
 satisfies both. See SKILL.md in this directory.
 
-    python .claude/skills/fix-latex/normalize.py <url-or-id>
-    python .claude/skills/fix-latex/normalize.py <url-or-id> --apply
+    python .claude/skills/anki-notes/normalize.py <url-or-id>
+    python .claude/skills/anki-notes/normalize.py <url-or-id> --apply
 """
 
 from __future__ import annotations
