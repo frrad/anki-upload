@@ -61,8 +61,7 @@ get right:
 - The Unicode `ε` is `\varepsilon`; `\epsilon` is the lunate `ϵ`. Either is
   defensible in ML notation -- pick one and say which.
 - The expectation operator is `\mathbb{E}`, not a bare `E` (which renders as
-  an italic variable). This needs the AMS fonts extension in the MathJax
-  config; `\operatorname{E}` is the fallback if it is unavailable.
+  an italic variable). Confirmed to render -- see below.
 
 ## Card writing style
 
@@ -115,6 +114,11 @@ Confirmed by observation on note 1756269681533:
 - A literal `\n` does **not** produce a line break; text runs together.
 - `\( ... \)` **does** render when the field is plain text.
 - A `<div>` boundary **does** produce a visible line break.
+
+Confirmed by observation on note 1765641609697:
+
+- `\mathbb{E}` **does** render, so the AMS fonts extension is present in the
+  MathJax config AnkiWeb ships. No `\operatorname{E}` fallback is needed.
 
 Not established -- do not assert these as fact:
 
