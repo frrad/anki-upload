@@ -1,4 +1,4 @@
-"""Tests for the fix-latex skill's normalizer.
+"""Tests for field validation and the plain-text -> field-HTML promotion.
 
 The guard in check() is the interesting part: it decides whether a field is
 safe to write, so a false positive blocks a legitimate repair and a false
@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from normalize import check, normalize, to_lines, visible_words
+from fields import check, to_html
 
 # ---------------------------------------------------------------------------
 # check(): must reject anything that stops MathJax rendering
@@ -102,77 +102,50 @@ def test_check_allows_a_field_with_no_math_at_all() -> None:
 
 
 # ---------------------------------------------------------------------------
-# normalize(): HTML in, <br>-only out
+# to_html(): newlines become <br>, except inside math
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_turns_div_per_line_into_br() -> None:
-    field = "<div>first</div><div>second</div><div>third</div>"
-    assert normalize(field) == "first<br>second<br>third"
+def test_to_html_promotes_newlines_to_br() -> None:
+    assert to_html("first\nsecond") == "first<br>second"
 
 
-def test_normalize_turns_empty_div_into_a_blank_line() -> None:
-    field = "<div>above</div><div><br></div><div>below</div>"
-    assert normalize(field) == "above<br><br>below"
+def test_to_html_promotes_a_blank_line_to_two_brs() -> None:
+    assert to_html("above\n\nbelow") == "above<br><br>below"
 
 
-def test_normalize_replaces_nbsp_entity_with_an_ordinary_space() -> None:
-    field = "<div>Batch Normalization&nbsp;(BatchNorm)</div>"
-    assert normalize(field) == "Batch Normalization (BatchNorm)"
+def test_to_html_leaves_a_field_without_newlines_alone() -> None:
+    assert to_html("single line") == "single line"
 
 
-def test_normalize_strips_trailing_nbsp_padding() -> None:
-    field = "<div>a line&nbsp;&nbsp;</div><div>another&nbsp;&nbsp;</div>"
-    assert normalize(field) == "a line<br>another"
+def test_to_html_keeps_newlines_inside_display_math() -> None:
+    # This is the examples/cards.txt shape: the author writes the equation
+    # across three lines. Promoting those newlines would put a <br> inside the
+    # delimiters and stop the formula rendering; to MathJax they are just
+    # whitespace, so they must survive as newlines.
+    text = "The trick says:\n\n\\[\n\\nabla_\\theta P = P \\nabla_\\theta \\log P\n\\]"
+    expected = (
+        "The trick says:<br><br>\\[\n\\nabla_\\theta P = P \\nabla_\\theta \\log P\n\\]"
+    )
+    assert to_html(text) == expected
 
 
-def test_normalize_handles_the_web_editors_wrapping_div() -> None:
-    # After a manual edit the editor leaves the first line bare and wraps
-    # everything after the caret in one div.
-    field = "first line&nbsp;<div>second line\nthird line</div>"
-    assert normalize(field) == "first line<br>second line<br>third line"
+def test_to_html_keeps_newlines_inside_inline_math() -> None:
+    assert to_html("see \\( a\nb \\) here") == "see \\( a\nb \\) here"
 
 
-def test_normalize_unescapes_html_entities_in_prose() -> None:
-    field = "<div>a &lt; b &amp;&amp; c &gt; d</div>"
-    assert normalize(field) == "a < b && c > d"
+def test_to_html_promotes_around_but_not_within_a_span() -> None:
+    text = "before\n\\[ x = 1 \\]\nafter"
+    assert to_html(text) == "before<br>\\[ x = 1 \\]<br>after"
 
 
-def test_normalize_preserves_latex_backslashes_untouched() -> None:
-    field = r"<div>- Formula: \( \frac{x}{\sqrt{\sigma^2 + \epsilon}} \)</div>"
-    assert normalize(field) == r"- Formula: \( \frac{x}{\sqrt{\sigma^2 + \epsilon}} \)"
+def test_to_html_handles_several_spans_in_one_field() -> None:
+    text = "one\n\\( a \\)\ntwo\n\\[ b \\]\nthree"
+    assert to_html(text) == "one<br>\\( a \\)<br>two<br>\\[ b \\]<br>three"
 
 
-def test_normalize_is_idempotent() -> None:
-    field = "<div>one</div><div><br></div><div>two</div>"
-    once = normalize(field)
-    assert normalize(once) == once
-
-
-def test_normalize_drops_leading_and_trailing_blank_lines() -> None:
-    field = "<div><br></div><div>content</div><div><br></div>"
-    assert normalize(field) == "content"
-
-
-def test_normalize_keeps_interior_blank_line_runs() -> None:
-    field = "<div>a</div><div><br></div><div><br></div><div>b</div>"
-    assert normalize(field) == "a<br><br><br>b"
-
-
-# ---------------------------------------------------------------------------
-# to_lines() and visible_words()
-# ---------------------------------------------------------------------------
-
-
-def test_to_lines_splits_on_both_div_and_br() -> None:
-    assert to_lines("<div>a<br>b</div><div>c</div>") == ["a", "b", "c"]
-
-
-def test_visible_words_ignores_markup_and_whitespace_differences() -> None:
-    html_version = "<div>Batch&nbsp;Normalization</div><div>- uses stats</div>"
-    br_version = "Batch Normalization<br>- uses stats"
-    assert visible_words(html_version) == visible_words(br_version)
-
-
-def test_visible_words_still_notices_a_real_text_change() -> None:
-    assert visible_words("<div>alpha</div>") != visible_words("<div>beta</div>")
+def test_to_html_output_passes_check_for_the_cards_file_example() -> None:
+    # The two halves have to agree: anything to_html produces from the
+    # documented cards-file format must survive the write guard.
+    text = "Given\n\n\\[\nP(\\tau|\\theta) = \\rho_0(s_0)\n\\]\n\nwhat follows?"
+    check("Front", to_html(text))

@@ -1,11 +1,9 @@
-"""Put the fix-latex skill directory on sys.path so its module is importable."""
+"""Put the repo root on sys.path so the modules under test are importable."""
 
 import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = REPO_ROOT / ".claude" / "skills" / "fix-latex"
 
-for path in (REPO_ROOT, SKILL_DIR):
-    if str(path) not in sys.path:
-        sys.path.insert(0, str(path))
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
