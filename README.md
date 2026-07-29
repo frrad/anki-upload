@@ -54,8 +54,9 @@ venv/bin/python main.py add --field Front=hello --field Back=world
 
 # read and edit an existing note, by id or by the URL in your browser
 venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
-venv/bin/python main.py get 1758491540484 --json > note.json   # round-trippable
+venv/bin/python main.py get 1758491540484 --field Back > back.txt  # edit, then:
 venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
+venv/bin/python main.py get 1758491540484 --json > note.json       # whole note
 venv/bin/python main.py update 1758491540484 --set Back='new text'
 venv/bin/python main.py update 1758491540484 --tags "numpy indexing"
 
@@ -76,6 +77,17 @@ newlines, and passing those through a shell argument is how they get
 mangled; a file has no quoting layer. `--field-file` does the same for
 `add`. A single trailing newline is dropped, since editors add one that was
 never part of the field.
+
+`get --field NAME` is the other half of that loop: it prints one field's raw
+value and nothing else, so it redirects to a file you can edit and hand back
+to `--set-file`. The trailing newline it adds is the one `--set-file` strips,
+so the round trip is byte-exact:
+
+```sh
+venv/bin/python main.py get 1758491540484 --field Back > back.txt
+$EDITOR back.txt
+venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
+```
 
 Both `update` and `add` validate before writing and refuse a field that
 would not render: a tag or HTML entity inside a `\( ... \)` or `\[ ... \]`

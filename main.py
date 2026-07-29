@@ -3,7 +3,7 @@
     ./venv/bin/python main.py login
     ./venv/bin/python main.py import examples/cards.txt
     ./venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
-    ./venv/bin/python main.py get 1758491540484 --json > note.json
+    ./venv/bin/python main.py get 1758491540484 --field Back > back.txt
     ./venv/bin/python main.py update https://ankiuser.net/edit/1758491540484 \
         --set-file Back=back.txt --tags numpy
     ./venv/bin/python main.py add --field Front=hello --field Back=world
@@ -200,6 +200,18 @@ def cmd_import(args: argparse.Namespace) -> int:
 def cmd_get(args: argparse.Namespace) -> int:
     note = get_note(parse_note_id(args.note))
 
+    if args.field:
+        # Just the value, so it can be redirected to a file and handed
+        # straight back to `update --set-file`. The trailing newline print()
+        # adds is the one --set-file strips, so the round trip is exact.
+        values = dict(zip(note.field_names, note.field_values))
+        if args.field not in values:
+            raise SystemExit(
+                f"no field named {args.field!r}; note has {list(values)}"
+            )
+        print(values[args.field])
+        return 0
+
     if args.json:
         # The round-trippable form. The human layout below cannot be parsed
         # back: a field whose own content contains a "--- Name ---" line is
@@ -382,10 +394,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("get", help="print a note")
     g.add_argument("note", help="note id or https://ankiuser.net/edit/<id> URL")
-    g.add_argument(
+    g_out = g.add_mutually_exclusive_group()
+    g_out.add_argument(
+        "--field",
+        metavar="NAME",
+        help="print only this field's raw value, for redirecting to a file "
+        "and editing; pairs with `update --set-file`",
+    )
+    g_out.add_argument(
         "--json",
         action="store_true",
-        help="emit JSON, the only form that can be read back without ambiguity",
+        help="emit the whole note as JSON, the only form that can be read "
+        "back without ambiguity",
     )
     g.set_defaults(func=cmd_get)
 

@@ -88,23 +88,25 @@ Edits go through a file, never through a shell argument. Field values
 contain apostrophes, backslashes and newlines, all of which the shell will
 mangle or the quoting will terminate early.
 
-1. **Save the note.** `--json` is the only form that can be read back
-   without ambiguity; the human-readable layout cannot, because a field
-   whose content contains a `--- Name ---` line is indistinguishable from a
-   field boundary.
+1. **Pull the field into a file, twice.** `--field` prints the raw value and
+   nothing else, so it redirects straight to disk. Keep one copy untouched
+   to diff against.
 
    ```sh
-   venv/bin/python main.py get <url-or-id> --json > note.json
+   venv/bin/python main.py get <url-or-id> --field Back > back.txt
+   cp back.txt back.orig.txt
    ```
 
-2. **Write the field you are changing to its own file,** and keep the
-   original `note.json` untouched as the thing to diff against.
+   Use `--json` instead when you need the whole note -- every field plus the
+   tags -- in a form that can be read back without ambiguity. The
+   human-readable default cannot: a field whose content contains a
+   `--- Name ---` line is indistinguishable from a field boundary.
 
-3. **Edit that file by hand.** Convert the math with exact substring
+2. **Edit `back.txt` by hand.** Convert the math with exact substring
    replacements asserted to fire exactly once, so surrounding prose cannot
    drift. Content is not yours to reword -- see the section above.
 
-4. **Write it back.**
+3. **Write it back.**
 
    ```sh
    venv/bin/python main.py update <url-or-id> --set-file Back=back.txt
@@ -115,12 +117,18 @@ mangle or the quoting will terminate early.
    other than `<br>`. A rejection is a real defect in the file, not an
    obstacle to route around.
 
-5. **Verify** by reading the note back and diffing against `note.json`.
-   `update` prints only the fields whose value actually changed, so an
+4. **Verify** by reading the field back and diffing it against the copy you
+   kept. The round trip is exact, so this should be silent:
+
+   ```sh
+   venv/bin/python main.py get <url-or-id> --field Back | diff back.orig.txt -
+   ```
+
+   `update` also prints only the fields whose value actually changed, so an
    unexpected field in that list means you have written something you did
    not intend.
 
-6. **Ask the user to confirm it renders.** Rendering happens in the Anki
+5. **Ask the user to confirm it renders.** Rendering happens in the Anki
    client and cannot be observed from here. A clean readback proves the
    bytes are right, not that MathJax is happy.
 
