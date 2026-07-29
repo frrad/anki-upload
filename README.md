@@ -54,7 +54,9 @@ venv/bin/python main.py add --field Front=hello --field Back=world
 
 # read and edit an existing note, by id or by the URL in your browser
 venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
-venv/bin/python main.py update 1758491540484 --set Back='<div>new</div>'
+venv/bin/python main.py get 1758491540484 --json > note.json   # round-trippable
+venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
+venv/bin/python main.py update 1758491540484 --set Back='new text'
 venv/bin/python main.py update 1758491540484 --tags "numpy indexing"
 
 # find notes
@@ -68,12 +70,32 @@ other field and the tags untouched. This matters because the underlying
 endpoint replaces the *whole* note, so `update` reads the note first and
 merges your changes over it.
 
+Prefer `--set-file NAME=PATH` over `--set NAME=VALUE` for anything
+non-trivial. Field values routinely contain apostrophes, backslashes and
+newlines, and passing those through a shell argument is how they get
+mangled; a file has no quoting layer. `--field-file` does the same for
+`add`. A single trailing newline is dropped, since editors add one that was
+never part of the field.
+
+Both `update` and `add` validate before writing and refuse a field that
+would not render: a tag or HTML entity inside a `\( ... \)` or `\[ ... \]`
+span, a stray `&nbsp;`, or markup other than `<br>`. Anki renders fields as
+HTML while MathJax needs each math span to be one unbroken run of text, and
+those rules are what satisfy both at once.
+
 ## Card file format
 
 Cards are separated by a line of `===`, and the front and back of a card by a
-line of `---`. Everything between delimiters is used **verbatim**, which is the
-point of the format: LaTeX, backslashes, quotes and blank lines all pass through
-without escaping.
+line of `---`. Everything between delimiters is taken as written — LaTeX,
+backslashes and quotes all pass through without escaping, which is the point of
+the format.
+
+The one transformation is line breaks. Anki renders a field as HTML, so a bare
+newline would collapse and your lines would run together; `import` promotes
+each one to `<br>` so the card looks like the file. Newlines *inside* a
+`\( ... \)` or `\[ ... \]` span are left alone, because MathJax reads them as
+whitespace and a `<br>` there would stop the formula rendering — which is why
+the display equation below can span three lines and still work.
 
 ```
 tags: rl policy-gradients

@@ -1,6 +1,6 @@
 ---
 name: anki-notes
-description: "Edit AnkiWeb notes: convert their math to LaTeX that actually renders, normalize field markup, and follow the house style for card content. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, when a card's lines run together on one line after editing, or when writing or rewording a card's fields. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-only format that satisfies both."
+description: "Edit an existing AnkiWeb note's fields: convert its math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-only format that satisfies both. Does not cover authoring new cards or bulk import."
 ---
 
 # Editing AnkiWeb notes
@@ -39,6 +39,12 @@ Rules:
 - **Inline math is `\( ... \)`; display math is `\[ ... \]`.** This matches
   `examples/cards.txt` in this repo.
 - **Nothing but plain text inside the delimiters.** No tags, no entities.
+  A newline *is* allowed there and is the one exception to the rule below:
+  MathJax treats it as whitespace, so an equation may span several lines.
+- **A newline outside a span is not a line break.** Anki collapses it. On
+  the import path `to_html` promotes those newlines to `<br>` for you,
+  leaving the ones inside math spans alone; on the `update` path what you
+  put in the file is what gets written, so write `<br>` yourself.
 
 ## Converting pseudo-math to LaTeX
 
@@ -78,21 +84,43 @@ Fixing a card's markup is not licence to rewrite it. Keep these separate:
 
 ## Procedure
 
-1. **Read the note.** `python main.py get <url-or-id>`, and save the output
-   before touching anything.
-2. **Convert the math by hand,** using exact substring replacements asserted
-   to fire exactly once, so surrounding prose cannot drift.
-3. **Normalize the markup** with `normalize.py` in this skill directory
-   (dry run first):
+Edits go through a file, never through a shell argument. Field values
+contain apostrophes, backslashes and newlines, all of which the shell will
+mangle or the quoting will terminate early.
+
+1. **Save the note.** `--json` is the only form that can be read back
+   without ambiguity; the human-readable layout cannot, because a field
+   whose content contains a `--- Name ---` line is indistinguishable from a
+   field boundary.
 
    ```sh
-   python .claude/skills/anki-notes/normalize.py <url-or-id>
-   python .claude/skills/anki-notes/normalize.py <url-or-id> --apply
+   venv/bin/python main.py get <url-or-id> --json > note.json
    ```
 
-4. **Verify** by reading the note back and diffing against the saved copy.
-   Assert the visible text is unchanged once whitespace is normalized.
-5. **Ask the user to confirm it renders.** Rendering happens in the Anki
+2. **Write the field you are changing to its own file,** and keep the
+   original `note.json` untouched as the thing to diff against.
+
+3. **Edit that file by hand.** Convert the math with exact substring
+   replacements asserted to fire exactly once, so surrounding prose cannot
+   drift. Content is not yours to reword -- see the section above.
+
+4. **Write it back.**
+
+   ```sh
+   venv/bin/python main.py update <url-or-id> --set-file Back=back.txt
+   ```
+
+   `update` validates before it writes and refuses anything that would not
+   render -- a tag or entity inside a math span, a stray `&nbsp;`, markup
+   other than `<br>`. A rejection is a real defect in the file, not an
+   obstacle to route around.
+
+5. **Verify** by reading the note back and diffing against `note.json`.
+   `update` prints only the fields whose value actually changed, so an
+   unexpected field in that list means you have written something you did
+   not intend.
+
+6. **Ask the user to confirm it renders.** Rendering happens in the Anki
    client and cannot be observed from here. A clean readback proves the
    bytes are right, not that MathJax is happy.
 
@@ -105,7 +133,12 @@ line ends. This recurs on every manual edit.
 
 So make these edits through `main.py update`, which writes the field value
 directly with no contenteditable in the path. If a card has already been
-edited by hand, re-run `normalize.py` to strip the artifacts.
+edited in the browser, its artifacts have to come out by hand: there is no
+script for it. There used to be, and it was deleted for cause -- it stripped
+every tag to compare before against after, so it silently discarded anything
+a tag carried (images above all) while its own safety check, which compared
+the same stripped text, saw nothing wrong. Removing markup you cannot see is
+not a job to automate against a live card.
 
 ## What is established, and what is not
 
@@ -122,6 +155,14 @@ Confirmed by observation on note 1765641609697:
 
 Not established -- do not assert these as fact:
 
+- **That a tag inside `\( ... \)` stops MathJax rendering.** This is the
+  claim the whole document rests on and the one `check()` refuses writes
+  over, so it is worth being honest about: it is a strong inference, not an
+  observation. Note 1756269959560 had `<br>` inside both display spans, was
+  tagged `leech` from repeated failure, and rendered correctly once the tags
+  came out -- but that edit changed a Unicode `σ` to `\sigma` at the same
+  time, so it does not isolate the cause. Treat the rule as a cheap
+  precaution that has never yet cost anything, not as a measured fact.
 - Whether per-line `<div>` wrappers or a trailing `&nbsp;` actually break
   MathJax, or whether the original card simply never had LaTeX in it to
   begin with. The `<br>`-only format avoids the question rather than

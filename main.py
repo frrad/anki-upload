@@ -3,8 +3,9 @@
     ./venv/bin/python main.py login
     ./venv/bin/python main.py import examples/cards.txt
     ./venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
+    ./venv/bin/python main.py get 1758491540484 --json > note.json
     ./venv/bin/python main.py update https://ankiuser.net/edit/1758491540484 \
-        --set Back='<div>np.argwhere(cond)</div>' --tags numpy
+        --set-file Back=back.txt --tags numpy
     ./venv/bin/python main.py add --field Front=hello --field Back=world
     ./venv/bin/python main.py search 'deck:"ml 2025" tag:numpy'
     ./venv/bin/python main.py decks
@@ -19,11 +20,14 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
 import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List
+
+from fields import check, to_html
 
 from anki import (
     SESSION_PATH,
@@ -95,7 +99,7 @@ def parse_card(block: str, index: int) -> Card:
     if not front or not back:
         raise ValueError(f"card {index}: front and back must both be non-empty")
 
-    return Card(front=front, back=back, tags=tags)
+    return Card(front=to_html(front), back=to_html(back), tags=tags)
 
 
 def parse_cards(text: str) -> List[Card]:
@@ -156,6 +160,12 @@ def cmd_import(args: argparse.Namespace) -> int:
     if not cards:
         raise SystemExit(f"no cards found in {args.cards_file}")
 
+    # Validate every card before uploading any, so a bad card late in the file
+    # cannot leave the deck half-imported.
+    for index, card in enumerate(cards, start=1):
+        check(f"card {index} front", card.front)
+        check(f"card {index} back", card.back)
+
     if args.dry_run:
         for index, card in enumerate(cards, start=1):
             print(f"--- card {index} (tags: {card.tags or 'none'}) ---")
@@ -189,6 +199,25 @@ def cmd_import(args: argparse.Namespace) -> int:
 
 def cmd_get(args: argparse.Namespace) -> int:
     note = get_note(parse_note_id(args.note))
+
+    if args.json:
+        # The round-trippable form. The human layout below cannot be parsed
+        # back: a field whose own content contains a "--- Name ---" line is
+        # indistinguishable from a field boundary.
+        json.dump(
+            {
+                "note_id": note.note_id,
+                "url": note.url,
+                "tags": note.tags,
+                "fields": dict(zip(note.field_names, note.field_values)),
+            },
+            sys.stdout,
+            indent=2,
+            ensure_ascii=False,
+        )
+        print()
+        return 0
+
     print(f"note {note.note_id}  {note.url}")
     print(f"tags: {note.tags or '(none)'}")
     for name, value in zip(note.field_names, note.field_values):
@@ -197,11 +226,39 @@ def cmd_get(args: argparse.Namespace) -> int:
     return 0
 
 
+def _read_field_files(pairs: List[str]) -> Dict[str, str]:
+    """NAME=PATH -> {NAME: file contents}, with the trailing newline dropped.
+
+    An editor will end the file with a newline that was never part of the
+    field, and a trailing <br> is a visible blank line on the card.
+    """
+    out: Dict[str, str] = {}
+    for name, path in _parse_assignments(pairs).items():
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as e:
+            raise SystemExit(f"could not read {path}: {e}")
+        out[name] = text[:-1] if text.endswith("\n") else text
+    return out
+
+
 def cmd_update(args: argparse.Namespace) -> int:
     note_id = parse_note_id(args.note)
     changes = _parse_assignments(args.set or [])
+    from_files = _read_field_files(args.set_file or [])
+
+    both = sorted(set(changes) & set(from_files))
+    if both:
+        raise SystemExit(f"field(s) given by both --set and --set-file: {both}")
+    changes.update(from_files)
+
     if not changes and args.tags is None:
-        raise SystemExit("nothing to do: pass --set NAME=VALUE and/or --tags")
+        raise SystemExit(
+            "nothing to do: pass --set NAME=VALUE, --set-file NAME=PATH and/or --tags"
+        )
+
+    for name, value in changes.items():
+        check(name, value)
 
     before = get_note(note_id)
     note = update_note(note_id, changes, args.tags)
@@ -224,11 +281,21 @@ def cmd_add(args: argparse.Namespace) -> int:
         )
 
     named = _parse_assignments(args.field or [])
+    from_files = _read_field_files(args.field_file or [])
+
+    both = sorted(set(named) & set(from_files))
+    if both:
+        raise SystemExit(f"field(s) given by both --field and --field-file: {both}")
+    named.update(from_files)
+
     order = _field_order(int(notetype_id)) or list(named)
 
     unknown = set(named) - set(order)
     if unknown:
         raise SystemExit(f"unknown field(s) {sorted(unknown)}; available: {order}")
+
+    for name, value in named.items():
+        check(name, value)
 
     values = [named.get(name, "") for name in order]
     add_note(values, int(deck_id), int(notetype_id), args.tags or "")
@@ -315,6 +382,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("get", help="print a note")
     g.add_argument("note", help="note id or https://ankiuser.net/edit/<id> URL")
+    g.add_argument(
+        "--json",
+        action="store_true",
+        help="emit JSON, the only form that can be read back without ambiguity",
+    )
     g.set_defaults(func=cmd_get)
 
     u = sub.add_parser("update", help="edit fields of an existing note")
@@ -325,6 +397,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME=VALUE",
         help="set a field by name; repeatable. Unset fields keep their value.",
     )
+    u.add_argument(
+        "--set-file",
+        action="append",
+        metavar="NAME=PATH",
+        help="set a field from a file; repeatable. Preferred for anything with "
+        "quotes, backslashes or newlines, which the shell would mangle.",
+    )
     u.add_argument("--tags", help="replace the note's tags (space separated)")
     u.set_defaults(func=cmd_update)
 
@@ -334,6 +413,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         metavar="NAME=VALUE",
         help="set a field by name; repeatable",
+    )
+    a.add_argument(
+        "--field-file",
+        action="append",
+        metavar="NAME=PATH",
+        help="set a field from a file; repeatable. Preferred for anything with "
+        "quotes, backslashes or newlines, which the shell would mangle.",
     )
     a.add_argument("--deck-id", help="defaults to $ANKIWEB_DECK_ID")
     a.add_argument("--notetype-id", help="defaults to $ANKIWEB_NOTETYPE_ID")
