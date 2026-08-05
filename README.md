@@ -91,9 +91,23 @@ venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
 
 Both `update` and `add` validate before writing and refuse a field that
 would not render: a tag or HTML entity inside a `\( ... \)` or `\[ ... \]`
-span, a stray `&nbsp;`, or markup other than `<br>`. Anki renders fields as
-HTML while MathJax needs each math span to be one unbroken run of text, and
-those rules are what satisfy both at once.
+span, a stray `&nbsp;`, or markup other than `<br>` and `<pre>`. Anki renders
+fields as HTML while MathJax needs each math span to be one unbroken run of
+text, and those rules are what satisfy both at once.
+
+`<pre>` is the one concession to code. It gives monospace and preserves
+whitespace, which is the only way to align columns now that `&nbsp;` is
+rejected outright:
+
+```
+<pre>nn.LayerNorm(512)  ✓ normalizes the last dim
+nn.LayerNorm(10)   ✗ error</pre>
+```
+
+Its newlines are already real line breaks, so `import` leaves them alone
+rather than promoting them to `<br>` — the same treatment a math span gets,
+for the same reason. An unclosed or nested `<pre>` is rejected, since one
+swallows the rest of the card and the other means nothing.
 
 ## Card file format
 
@@ -105,9 +119,10 @@ the format.
 The one transformation is line breaks. Anki renders a field as HTML, so a bare
 newline would collapse and your lines would run together; `import` promotes
 each one to `<br>` so the card looks like the file. Newlines *inside* a
-`\( ... \)` or `\[ ... \]` span are left alone, because MathJax reads them as
-whitespace and a `<br>` there would stop the formula rendering — which is why
-the display equation below can span three lines and still work.
+`\( ... \)`, `\[ ... \]` or `<pre>` span are left alone — MathJax reads them as
+whitespace and a `<br>` there would stop the formula rendering, while `<pre>`
+renders them as breaks already and a `<br>` would double-space the code. That
+is why the display equation below can span three lines and still work.
 
 ```
 tags: rl policy-gradients
