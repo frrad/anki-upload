@@ -145,5 +145,17 @@ See `examples/cards.txt` for a working file.
 
 ## Limitations
 
-AnkiWeb exposes no note-deletion endpoint, so deleting cards still requires a
-desktop or mobile Anki client.
+This tool speaks AnkiWeb's `/svc/` API, which is note-addressed: it is an editor,
+a search box and a reviewer. Card *state* — flags, due dates, queue, suspension,
+deletion — never crosses it. That data moves only over the separate `sync/`
+protocol that Anki desktop and AnkiDroid use, so anything card-level is out of
+reach here and still requires a desktop or mobile client. Note deletion and card
+flags are the two you are most likely to go looking for.
+
+The exception is search: card-level *predicates* are evaluated server-side, so
+`search 'flag:1'`, `search 'is:suspended'` and `search 'prop:due<7'` all work and
+return matching note ids — you can filter on card state without being able to read
+or change it.
+
+See [docs/ankiweb-protocols.md](docs/ankiweb-protocols.md) for the full protocol
+map and the evidence behind it.
