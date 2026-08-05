@@ -73,6 +73,48 @@ def test_check_allows_br_as_the_only_markup() -> None:
 
 
 # ---------------------------------------------------------------------------
+# check(): <pre> for code, the one exception to the <br>-only rule
+# ---------------------------------------------------------------------------
+
+
+def test_check_allows_a_pre_block() -> None:
+    check("Back", "prose<br><br><pre>x = torch.randn(32, 10, 512)\nnn.LayerNorm(512)</pre>")
+
+
+def test_check_rejects_pre_inside_math() -> None:
+    # <pre> is allowed markup, but "no tags inside a math span" still wins:
+    # anything between the delimiters must be one unbroken run of text.
+    with pytest.raises(SystemExit, match="HTML tag inside inline math"):
+        check("Back", r"\( a <pre>b</pre> \)")
+
+
+def test_check_rejects_unclosed_pre() -> None:
+    # An unclosed block swallows the rest of the card, which is how the OLS
+    # note ended up with a stray </ul> and a mangled tail.
+    with pytest.raises(SystemExit, match="unbalanced <pre>"):
+        check("Back", "<pre>code goes here")
+
+
+def test_check_rejects_stray_closing_pre() -> None:
+    with pytest.raises(SystemExit, match="unbalanced <pre>"):
+        check("Back", "code goes here</pre>")
+
+
+def test_check_rejects_nested_pre() -> None:
+    with pytest.raises(SystemExit, match="unbalanced <pre>"):
+        check("Back", "<pre>outer<pre>inner</pre></pre>")
+
+
+def test_check_still_rejects_code_and_span() -> None:
+    # The allowlist is <br> and <pre> only. Widening it is a deliberate act,
+    # not something a paste from a docs site gets to do implicitly.
+    with pytest.raises(SystemExit, match="unexpected markup"):
+        check("Back", "<code>x</code>")
+    with pytest.raises(SystemExit, match="unexpected markup"):
+        check("Back", '<span class="pre">x</span>')
+
+
+# ---------------------------------------------------------------------------
 # check(): must NOT reject legitimate LaTeX
 # ---------------------------------------------------------------------------
 
@@ -142,6 +184,31 @@ def test_to_html_promotes_around_but_not_within_a_span() -> None:
 def test_to_html_handles_several_spans_in_one_field() -> None:
     text = "one\n\\( a \\)\ntwo\n\\[ b \\]\nthree"
     assert to_html(text) == "one<br>\\( a \\)<br>two<br>\\[ b \\]<br>three"
+
+
+def test_to_html_keeps_newlines_inside_pre() -> None:
+    # <pre> preserves whitespace itself, so its newlines are already real line
+    # breaks. Promoting them would render every code line double-spaced.
+    text = "Example:\n\n<pre>a = 1\nb = 2</pre>"
+    assert to_html(text) == "Example:<br><br><pre>a = 1\nb = 2</pre>"
+
+
+def test_to_html_preserves_leading_spaces_inside_pre() -> None:
+    # The whole reason for <pre>: column alignment without &nbsp;, which
+    # check() bans outright.
+    text = "<pre>nn.LayerNorm(512)  ok\nnn.LayerNorm(10)   error</pre>"
+    assert to_html(text) == text
+
+
+def test_to_html_handles_pre_and_math_in_one_field() -> None:
+    text = "see\n\\( a \\)\nthen\n<pre>x = 1\ny = 2</pre>\ndone"
+    expected = "see<br>\\( a \\)<br>then<br><pre>x = 1\ny = 2</pre><br>done"
+    assert to_html(text) == expected
+
+
+def test_to_html_pre_output_passes_check() -> None:
+    text = "Signature:\n\n<pre>nn.LayerNorm(normalized_shape)\nnn.LayerNorm(512)</pre>"
+    check("Back", to_html(text))
 
 
 def test_to_html_output_passes_check_for_the_cards_file_example() -> None:
