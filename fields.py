@@ -21,7 +21,11 @@ from __future__ import annotations
 import re
 
 BR_RE = re.compile(r"<br\s*/?>", re.I)
-TAG_RE = re.compile(r"<[^>]+>")
+# A tag can only start where the HTML parser would start one: "<" followed by
+# a letter, "/", "!" or "?". Anything else -- "<=" in code, "< 1e-3" in prose --
+# is text to a browser, and reading it as markup made this run to the next ">"
+# and reject the whole span it swallowed.
+TAG_RE = re.compile(r"<[a-zA-Z/!?][^>]*>")
 INLINE_MATH_RE = re.compile(r"\\\((.*?)\\\)", re.S)
 DISPLAY_MATH_RE = re.compile(r"\\\[(.*?)\\\]", re.S)
 # A real HTML entity, not a bare "&" -- inside an `aligned` environment "&" is

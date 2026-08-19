@@ -115,6 +115,39 @@ def test_check_still_rejects_code_and_span() -> None:
 
 
 # ---------------------------------------------------------------------------
+# check(): "<" is only markup when a tag can actually start there
+# ---------------------------------------------------------------------------
+
+
+def test_check_allows_less_than_or_equal_in_a_pre_block() -> None:
+    # A tag name must begin with a letter, so a browser renders "<=" as text.
+    # Reading it as markup made the guard swallow everything up to the next
+    # ">" -- here the closing </pre> -- and reject a card that renders fine.
+    check("Back", "<pre>return grad_out * (x.abs() <= 1).float()</pre>")
+
+
+def test_check_allows_a_less_than_followed_by_a_space() -> None:
+    check("Back", "keep the learning rate < 1e-3 or it diverges")
+
+
+def test_check_allows_less_than_or_equal_inside_math() -> None:
+    check("Back", r"the mask is \( i <= j \), upper triangular")
+
+
+def test_check_rejects_a_real_tag_that_follows_a_less_than_or_equal() -> None:
+    # The old pattern matched "<= 1 <div>" as a single bogus tag, so this was
+    # rejected for the wrong reason. It must still be rejected for the right
+    # one: the <div> is real markup.
+    with pytest.raises(SystemExit, match="unexpected markup"):
+        check("Back", "x <= 1 <div>a</div>")
+
+
+def test_check_rejects_a_tag_with_attributes_after_a_less_than_or_equal() -> None:
+    with pytest.raises(SystemExit, match="unexpected markup"):
+        check("Back", 'x <= 1 <span class="pre">a</span>')
+
+
+# ---------------------------------------------------------------------------
 # check(): must NOT reject legitimate LaTeX
 # ---------------------------------------------------------------------------
 
