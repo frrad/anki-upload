@@ -1,6 +1,6 @@
 ---
 name: anki-notes
-description: "Edit an existing AnkiWeb note's fields: convert its math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-plus-<pre> format that satisfies both. Does not cover authoring new cards or bulk import."
+description: "Edit an existing AnkiWeb note's fields: convert its math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-plus-<pre>-plus-<b> format that satisfies both. Does not cover authoring new cards or bulk import."
 ---
 
 # Editing AnkiWeb notes
@@ -21,7 +21,7 @@ breaks, and adding markup back to fix the line breaks risks the math.
 ## The target format
 
 Use `<br>` as the **only** markup outside code, with math spans left as clean
-text (`<pre>` is the one exception, covered below):
+text (`<pre>` and `<b>` are the two exceptions, covered below):
 
 ```
 Batch Normalization (BatchNorm)<br>- Uses batch statistics.<br>- Formula: \( \frac{x - \mu}{\sqrt{\sigma^2 + \epsilon}} \)<br><br>Layer Normalization
@@ -42,15 +42,22 @@ Rules:
 - **Nothing but plain text inside the delimiters.** No tags, no entities.
   A newline *is* allowed there and is the one exception to the rule below:
   MathJax treats it as whitespace, so an equation may span several lines.
-- **`<pre>` for code, and nothing else.** It is the one exception to
+- **`<pre>` for code, and nothing else.** It is one of the two exceptions to
   `<br>`-only: monospace plus preserved whitespace, which is how a code block
   keeps its column alignment without `&nbsp;`. Newlines inside it stay
   newlines — a `<br>` there would double-space. It must be closed and never
   nested.
+- **`<b>` for the one word that carries the answer.** The other exception:
+  the discriminating detail — `<b>inclusive</b>`, `<b>flattens</b>` — so the
+  eye finds it on a phone screen. Being inline it protects nothing, and it
+  must be closed and never nested, same as `<pre>`.
 - **A newline outside a span is not a line break.** Anki collapses it. On
   the import path `to_html` promotes those newlines to `<br>` for you,
   leaving the ones inside math spans alone; on the `update` path what you
   put in the file is what gets written, so write `<br>` yourself.
+
+Bold sparingly: one or two spans in a field. Bolding a whole line is the
+same as bolding nothing, and it is what a paste from a docs site produces.
 
 Use `<pre>` only for genuine code. A signature pasted from a docs site
 arrives wrapped in `<dl>/<dt>/<span>` with inline styles and hardcoded
@@ -125,8 +132,9 @@ mangle or the quoting will terminate early.
 
    `update` validates before it writes and refuses anything that would not
    render -- a tag or entity inside a math span, a stray `&nbsp;`, markup
-   other than `<br>`. A rejection is a real defect in the file, not an
-   obstacle to route around.
+   other than `<br>`, `<pre>` and `<b>`, or an unbalanced one of the latter
+   two. A rejection is a real defect in the file, not an obstacle to route
+   around.
 
 4. **Verify** by reading the field back and diffing it against the copy you
    kept. The round trip is exact, so this should be silent:

@@ -91,7 +91,7 @@ venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
 
 Both `update` and `add` validate before writing and refuse a field that
 would not render: a tag or HTML entity inside a `\( ... \)` or `\[ ... \]`
-span, a stray `&nbsp;`, or markup other than `<br>` and `<pre>`. Anki renders
+span, a stray `&nbsp;`, or markup other than `<br>`, `<pre>` and `<b>`. Anki renders
 fields as HTML while MathJax needs each math span to be one unbroken run of
 text, and those rules are what satisfy both at once.
 
@@ -108,6 +108,16 @@ Its newlines are already real line breaks, so `import` leaves them alone
 rather than promoting them to `<br>` — the same treatment a math span gets,
 for the same reason. An unclosed or nested `<pre>` is rejected, since one
 swallows the rest of the card and the other means nothing.
+
+`<b>` is the other concession, for the one word in an answer you want the eye
+to land on — the discriminating detail, not the whole line. Being inline it
+protects nothing, so a newline beside it is promoted like any other, and it
+is balance-checked exactly as `<pre>` is: an unclosed `<b>` bolds the rest of
+the card, and a nested one means nothing.
+
+```
+dim is required, shape preserved, <b>inclusive</b>
+```
 
 ## Card file format
 

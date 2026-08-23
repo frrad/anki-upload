@@ -11,6 +11,10 @@ whitespace, which is the only way to align columns now that `&nbsp;` is
 banned outright -- and its newlines are already real line breaks, so they
 must survive the promotion exactly as a math span's do.
 
+`<b>` is the other, for the load-bearing word in an answer. It is inline and
+carries no whitespace meaning, so unlike `<pre>` it protects nothing: a
+newline beside it is an ordinary line break and still becomes `<br>`.
+
 `to_html` performs that promotion and `check` refuses anything that would
 violate it, so the rules are enforced on the way in rather than repaired
 afterwards.
@@ -34,9 +38,12 @@ ENTITY_RE = re.compile(r"&(?:[a-zA-Z][a-zA-Z0-9]*|#\d+|#[xX][0-9a-fA-F]+);")
 # Either delimiter pair, so a span can be found without knowing which it is.
 ANY_MATH_RE = re.compile(r"\\\[.*?\\\]|\\\((.*?)\\\)", re.S)
 PRE_TAG_RE = re.compile(r"</?pre\s*>", re.I)
+# "b" must be followed by the closing ">", or "<br>" would read as an opening
+# bold and every line break would look unbalanced.
+B_TAG_RE = re.compile(r"</?b\s*>", re.I)
 # The full markup allowlist. Everything else is rejected, so a paste from a
 # docs site cannot widen it by accident.
-ALLOWED_TAG_RE = re.compile(r"<br\s*/?>|</?pre\s*>", re.I)
+ALLOWED_TAG_RE = re.compile(r"<br\s*/?>|</?pre\s*>|</?b\s*>", re.I)
 # Spans whose newlines are load-bearing and must not become <br>: math, where
 # they are whitespace to MathJax, and <pre>, where they are the line breaks.
 PROTECTED_RE = re.compile(r"\\\[.*?\\\]|\\\(.*?\\\)|<pre\s*>.*?</pre\s*>", re.S | re.I)
@@ -62,20 +69,20 @@ def to_html(text: str) -> str:
     return "".join(out)
 
 
-def _check_pre_balance(name: str, value: str) -> None:
-    """Refuse an unbalanced or nested <pre>.
+def _check_balance(name: str, value: str, tag: str, pattern: re.Pattern[str]) -> None:
+    """Refuse an unbalanced or nested container tag.
 
-    An unclosed block swallows the rest of the card, and a nested one has no
-    meaning; both are the signature of markup that arrived by paste rather
-    than intent.
+    An unclosed one swallows the rest of the card -- everything after it is
+    monospaced or bold -- and a nested one has no meaning; both are the
+    signature of markup that arrived by paste rather than intent.
     """
     depth = 0
-    for tag in PRE_TAG_RE.findall(value):
-        depth += -1 if tag.startswith("</") else 1
+    for found in pattern.findall(value):
+        depth += -1 if found.startswith("</") else 1
         if depth not in (0, 1):
-            raise SystemExit(f"{name}: unbalanced <pre>")
+            raise SystemExit(f"{name}: unbalanced <{tag}>")
     if depth != 0:
-        raise SystemExit(f"{name}: unbalanced <pre>")
+        raise SystemExit(f"{name}: unbalanced <{tag}>")
 
 
 def check(name: str, value: str) -> None:
@@ -91,4 +98,5 @@ def check(name: str, value: str) -> None:
     stray = {t for t in TAG_RE.findall(value) if not ALLOWED_TAG_RE.fullmatch(t)}
     if stray:
         raise SystemExit(f"{name}: unexpected markup {sorted(stray)}")
-    _check_pre_balance(name, value)
+    _check_balance(name, value, "pre", PRE_TAG_RE)
+    _check_balance(name, value, "b", B_TAG_RE)
