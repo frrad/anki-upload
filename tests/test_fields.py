@@ -105,6 +105,48 @@ def test_check_rejects_nested_pre() -> None:
         check("Back", "<pre>outer<pre>inner</pre></pre>")
 
 
+# ---------------------------------------------------------------------------
+# check(): <b> for emphasis, the other exception to the <br>-only rule
+# ---------------------------------------------------------------------------
+
+
+def test_check_allows_a_bold_span() -> None:
+    check("Back", "dim is required, shape preserved, <b>inclusive</b>.")
+
+
+def test_check_allows_bold_next_to_a_br() -> None:
+    check("Back", "<b>Front</b><br>the back")
+
+
+def test_check_rejects_bold_inside_math() -> None:
+    # Same rule as <pre>: allowed markup still may not sit inside a math span,
+    # which must be one unbroken run of text for MathJax.
+    with pytest.raises(SystemExit, match="HTML tag inside inline math"):
+        check("Back", r"\( a <b>b</b> \)")
+
+
+def test_check_rejects_unclosed_bold() -> None:
+    # An unclosed <b> bolds the rest of the card.
+    with pytest.raises(SystemExit, match="unbalanced <b>"):
+        check("Back", "the <b>important part")
+
+
+def test_check_rejects_stray_closing_bold() -> None:
+    with pytest.raises(SystemExit, match="unbalanced <b>"):
+        check("Back", "the important part</b>")
+
+
+def test_check_rejects_nested_bold() -> None:
+    with pytest.raises(SystemExit, match="unbalanced <b>"):
+        check("Back", "<b>outer<b>inner</b></b>")
+
+
+def test_check_does_not_confuse_br_with_an_opening_bold() -> None:
+    # Regression guard for the allowlist pattern: "<br>" must not be read as
+    # a <b> tag, or every line break would look like an unbalanced bold.
+    check("Back", "line one<br>line two")
+
+
 def test_check_still_rejects_code_and_span() -> None:
     # The allowlist is <br> and <pre> only. Widening it is a deliberate act,
     # not something a paste from a docs site gets to do implicitly.
@@ -242,6 +284,16 @@ def test_to_html_handles_pre_and_math_in_one_field() -> None:
 def test_to_html_pre_output_passes_check() -> None:
     text = "Signature:\n\n<pre>nn.LayerNorm(normalized_shape)\nnn.LayerNorm(512)</pre>"
     check("Back", to_html(text))
+
+
+def test_to_html_promotes_newlines_around_bold() -> None:
+    # <b> is inline, not protected: a newline beside it is an ordinary line
+    # break and must still be promoted.
+    assert to_html("<b>heading</b>\nbody") == "<b>heading</b><br>body"
+
+
+def test_to_html_bold_output_passes_check() -> None:
+    check("Back", to_html("dim is <b>required</b>\nand shape is preserved"))
 
 
 def test_to_html_output_passes_check_for_the_cards_file_example() -> None:
