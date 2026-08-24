@@ -1,9 +1,14 @@
 ---
 name: anki-notes
-description: "Edit an existing AnkiWeb note's fields: convert its math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-plus-<pre>-plus-<b> format that satisfies both. Does not cover authoring new cards or bulk import."
+description: "Write AnkiWeb notes and edit existing ones: add a new card to the deck, bulk-import a batch, convert math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when asked to make, add, or create a flashcard or a set of them, and when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-plus-<pre>-plus-<b> format that satisfies both."
 ---
 
-# Editing AnkiWeb notes
+# Writing and editing AnkiWeb notes
+
+Everything here runs from the `anki-upload` checkout, so `cd
+~/Projects/anki-upload` first; `venv/bin/python main.py` is relative to it.
+Credentials and the default deck come from its `.env`, so no ids need
+passing on the command line.
 
 ## The core problem
 
@@ -100,7 +105,76 @@ Fixing a card's markup is not licence to rewrite it. Keep these separate:
   its own sake. A bare topic name like `Jensen's inequality` is a
   legitimate front, not a defect to be fixed.
 
-## Procedure
+When writing a *new* card, the same brevity applies, plus:
+
+- **Agree on the card in chat before adding it.** Draft front and back as
+  text, iterate, and only then upload. The deck is not a scratchpad.
+- **The front must not give away the back.** No hints, no restating the
+  answer, no phrasing that reads as multiple choice. If two answers are
+  equally right, pluralize the front and ask for both rather than picking
+  one arbitrarily.
+- **A card must name its own context.** A bare signature with no mention of
+  the class or module it belongs to is unanswerable in a shuffled deck, and
+  a sibling card establishing that context does not help.
+- **Cards that cannot be failed are as useless as cards that cannot be
+  passed.** Purely definitional material and "the full list of X" reference
+  sheets are both reference, not recall; they belong in notes, not the deck.
+- **It is reviewed on a phone.** Prose with `<br>` reflows; a `<pre>` block
+  wider than a phone screen does not. Never hard-wrap a field at ~72
+  columns -- those breaks land mid-sentence on a narrow screen.
+
+## Procedure: adding a note
+
+One card goes in through `add`, a batch through `import`. Both validate
+exactly as `update` does, so a rejection means the file is wrong.
+
+1. **Write each field to its own file.** Same reason as editing: a shell
+   argument mangles backslashes, apostrophes and newlines, and a card is
+   mostly those. `--field NAME=VALUE` exists for trivial values only.
+
+   For `add`, write the field exactly as it should be stored -- **`<br>`
+   between lines, written by hand**. `add` does no newline promotion, so a
+   bare newline in the file collapses on the card.
+
+   ```sh
+   venv/bin/python main.py add --field-file Front=front.txt --field-file Back=back.txt --tags "python stdlib"
+   ```
+
+2. **For several cards, use a cards file instead.** Cards are separated by a
+   line of `===`, front from back by a line of `---`, and an optional
+   leading `tags:` line sets that card's tags.
+
+   On this path newlines *are* promoted: `import` turns each one into `<br>`
+   so the card looks like the file, leaving alone those inside `\( ... \)`,
+   `\[ ... \]` and `<pre>` spans, where a `<br>` would break the formula or
+   double-space the code. So write plain newlines here and `<br>` under
+   `add` -- the difference is real and easy to get backwards.
+
+   ```sh
+   venv/bin/python main.py import cards.txt --dry-run   # parse and print only
+   venv/bin/python main.py import cards.txt
+   ```
+
+   `--dry-run` is worth running first on anything non-trivial: it shows the
+   parse, so a misplaced `---` surfaces before the upload rather than as a
+   card split down the middle.
+
+3. **Check the note landed by reading it back**, using the id the add
+   printed. There is nothing to diff against, so read it and check it says
+   what you drafted.
+
+   ```sh
+   venv/bin/python main.py get <id> --json
+   ```
+
+4. **Ask the user to confirm it renders**, as with an edit.
+
+Note that **there is no delete.** The AnkiWeb API is note-addressed and
+carries no card state, so a card added by mistake can only be tombstoned --
+set every field to `deleteme` and remove it in the client. Getting the card
+right before it goes in is cheaper than getting it out.
+
+## Procedure: editing an existing note
 
 Edits go through a file, never through a shell argument. Field values
 contain apostrophes, backslashes and newlines, all of which the shell will
