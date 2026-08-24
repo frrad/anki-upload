@@ -118,7 +118,7 @@ When writing a *new* card, the same brevity applies, plus:
   a sibling card establishing that context does not help.
 - **Cards that cannot be failed are as useless as cards that cannot be
   passed.** Purely definitional material and "the full list of X" reference
-  sheets both belong in the vault, not the deck.
+  sheets are both reference, not recall; they belong in notes, not the deck.
 - **It is reviewed on a phone.** Prose with `<br>` reflows; a `<pre>` block
   wider than a phone screen does not. Never hard-wrap a field at ~72
   columns -- those breaks land mid-sentence on a narrow screen.
