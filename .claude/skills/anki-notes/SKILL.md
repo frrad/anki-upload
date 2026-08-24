@@ -107,7 +107,7 @@ Fixing a card's markup is not licence to rewrite it. Keep these separate:
 
 When writing a *new* card, the same brevity applies, plus:
 
-- **Agree the card in chat before adding it.** Draft front and back as
+- **Agree on the card in chat before adding it.** Draft front and back as
   text, iterate, and only then upload. The deck is not a scratchpad.
 - **The front must not give away the back.** No hints, no restating the
   answer, no phrasing that reads as multiple choice. If two answers are
