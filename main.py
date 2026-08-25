@@ -7,6 +7,8 @@
     ./venv/bin/python main.py update https://ankiuser.net/edit/1758491540484 \
         --set-file Back=back.txt --tags numpy
     ./venv/bin/python main.py add --field Front=hello --field Back=world
+    ./venv/bin/python main.py add --field-file Front=front.txt \
+        --field-file Back=back.txt --image-file Back=diagram.png
     ./venv/bin/python main.py search 'deck:"ml 2025" tag:numpy'
     ./venv/bin/python main.py decks
 
@@ -27,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, List
 
-from fields import check, to_html
+from fields import check, inline_image, to_html
 
 from anki import (
     SESSION_PATH,
@@ -254,6 +256,21 @@ def _read_field_files(pairs: List[str]) -> Dict[str, str]:
     return out
 
 
+def _prepend_image_files(values: Dict[str, str], pairs: List[str]) -> None:
+    """Prepend one inline image to fields already supplied in this command."""
+    images = _parse_assignments(pairs)
+    missing = sorted(set(images) - set(values))
+    if missing:
+        raise SystemExit(
+            f"--image-file field(s) {missing} must also be supplied with "
+            "--field/--field-file or --set/--set-file"
+        )
+
+    for name, path in images.items():
+        tag = inline_image(Path(path))
+        values[name] = tag + ("<br><br>" + values[name] if values[name] else "")
+
+
 def cmd_update(args: argparse.Namespace) -> int:
     note_id = parse_note_id(args.note)
     changes = _parse_assignments(args.set or [])
@@ -263,6 +280,7 @@ def cmd_update(args: argparse.Namespace) -> int:
     if both:
         raise SystemExit(f"field(s) given by both --set and --set-file: {both}")
     changes.update(from_files)
+    _prepend_image_files(changes, args.image_file or [])
 
     if not changes and args.tags is None:
         raise SystemExit(
@@ -299,6 +317,7 @@ def cmd_add(args: argparse.Namespace) -> int:
     if both:
         raise SystemExit(f"field(s) given by both --field and --field-file: {both}")
     named.update(from_files)
+    _prepend_image_files(named, args.image_file or [])
 
     order = _field_order(int(notetype_id)) or list(named)
 
@@ -424,6 +443,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="set a field from a file; repeatable. Preferred for anything with "
         "quotes, backslashes or newlines, which the shell would mangle.",
     )
+    u.add_argument(
+        "--image-file",
+        action="append",
+        metavar="NAME=PATH",
+        help="prepend a Base64 inline image to a field supplied by --set or "
+        "--set-file; supports PNG, JPEG, GIF and WebP",
+    )
     u.add_argument("--tags", help="replace the note's tags (space separated)")
     u.set_defaults(func=cmd_update)
 
@@ -440,6 +466,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="NAME=PATH",
         help="set a field from a file; repeatable. Preferred for anything with "
         "quotes, backslashes or newlines, which the shell would mangle.",
+    )
+    a.add_argument(
+        "--image-file",
+        action="append",
+        metavar="NAME=PATH",
+        help="prepend a Base64 inline image to a field supplied by --field or "
+        "--field-file; supports PNG, JPEG, GIF and WebP",
     )
     a.add_argument("--deck-id", help="defaults to $ANKIWEB_DECK_ID")
     a.add_argument("--notetype-id", help="defaults to $ANKIWEB_NOTETYPE_ID")

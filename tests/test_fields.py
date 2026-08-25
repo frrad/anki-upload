@@ -7,9 +7,12 @@ negative corrupts a card. Both directions are tested.
 
 from __future__ import annotations
 
+import base64
+from pathlib import Path
+
 import pytest
 
-from fields import check, to_html
+from fields import check, inline_image, to_html
 
 # ---------------------------------------------------------------------------
 # check(): must reject anything that stops MathJax rendering
@@ -148,12 +151,83 @@ def test_check_does_not_confuse_br_with_an_opening_bold() -> None:
 
 
 def test_check_still_rejects_code_and_span() -> None:
-    # The allowlist is <br> and <pre> only. Widening it is a deliberate act,
+    # The ordinary allowlist is deliberately narrow. Widening it is a deliberate act,
     # not something a paste from a docs site gets to do implicitly.
     with pytest.raises(SystemExit, match="unexpected markup"):
         check("Back", "<code>x</code>")
     with pytest.raises(SystemExit, match="unexpected markup"):
         check("Back", '<span class="pre">x</span>')
+
+
+# ---------------------------------------------------------------------------
+# check(): canonical inline images are allowed, arbitrary <img> markup is not
+# ---------------------------------------------------------------------------
+
+
+def test_inline_image_builds_a_valid_responsive_png_tag(tmp_path: Path) -> None:
+    source = tmp_path / "diagram.png"
+    payload = b"\x89PNG\r\n\x1a\nimage payload"
+    source.write_bytes(payload)
+
+    tag = inline_image(source)
+
+    assert tag.startswith('<img src="data:image/png;base64,')
+    assert f' alt="{source.name}"' in tag
+    assert tag.endswith('style="max-width:100%;height:auto">')
+    encoded = tag.split("base64,", 1)[1].split('"', 1)[0]
+    assert base64.b64decode(encoded, validate=True) == payload
+    check("Back", tag + "<br><br>answer")
+
+
+def test_inline_image_escapes_alt_text(tmp_path: Path) -> None:
+    source = tmp_path / "diagram.png"
+    source.write_bytes(b"\x89PNG\r\n\x1a\nimage payload")
+
+    tag = inline_image(source, 'tensor < split & "reduce"')
+
+    assert 'alt="tensor &lt; split &amp; &quot;reduce&quot;"' in tag
+    check("Back", tag)
+
+
+def test_inline_image_rejects_an_unsupported_extension(tmp_path: Path) -> None:
+    source = tmp_path / "diagram.svg"
+    source.write_text("<svg></svg>")
+    with pytest.raises(SystemExit, match="unsupported image type"):
+        inline_image(source)
+
+
+def test_inline_image_rejects_bytes_that_do_not_match_the_extension(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "diagram.png"
+    source.write_bytes(b"not actually a PNG")
+    with pytest.raises(SystemExit, match="does not match its .png extension"):
+        inline_image(source)
+
+
+def test_check_rejects_a_remote_image() -> None:
+    with pytest.raises(SystemExit, match="invalid inline image tag"):
+        check("Back", '<img src="https://example.com/diagram.png">')
+
+
+def test_check_rejects_extra_image_attributes() -> None:
+    encoded = base64.b64encode(b"\x89PNG\r\n\x1a\nimage payload").decode("ascii")
+    tag = (
+        f'<img src="data:image/png;base64,{encoded}" alt="Diagram" '
+        'style="max-width:100%;height:auto" onerror="alert(1)">'
+    )
+    with pytest.raises(SystemExit, match="invalid inline image tag"):
+        check("Back", tag)
+
+
+def test_check_rejects_image_data_that_disagrees_with_its_mime() -> None:
+    encoded = base64.b64encode(b"GIF89aimage payload").decode("ascii")
+    tag = (
+        f'<img src="data:image/png;base64,{encoded}" alt="Diagram" '
+        'style="max-width:100%;height:auto">'
+    )
+    with pytest.raises(SystemExit, match="does not match its MIME type"):
+        check("Back", tag)
 
 
 # ---------------------------------------------------------------------------
