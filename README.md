@@ -119,6 +119,56 @@ the card, and a nested one means nothing.
 dim is required, shape preserved, <b>inclusive</b>
 ```
 
+### Inline images via Base64 data URLs
+
+AnkiWeb's `add-or-update` endpoint accepts an image embedded directly in a
+field as a Base64 `data:` URL:
+
+```html
+<img src="data:image/png;base64,..." alt="Description" style="max-width:100%;height:auto">
+```
+
+This was verified in August 2026 with a PNG added to a Basic note: AnkiWeb
+stored the complete field verbatim, reading the note back and decoding the
+payload reproduced the source image byte-for-byte, and the image rendered in
+the reviewer.
+
+The regular `main.py add` and `update` commands deliberately reject `<img>`:
+their small markup allowlist protects normal text cards from accidental pasted
+HTML. For an inline image, use the lower-level client explicitly and construct
+the tag yourself:
+
+```python
+import base64
+import os
+from pathlib import Path
+
+from anki import add_note
+
+png = Path("diagram.png").read_bytes()
+encoded = base64.b64encode(png).decode("ascii")
+back = (
+    f'<img src="data:image/png;base64,{encoded}" alt="Diagram" '
+    'style="max-width:100%;height:auto"><br><br>'
+    '<b>Answer</b>'
+)
+
+add_note(
+    ["Question", back],
+    deck_id=int(os.environ["ANKIWEB_DECK_ID"]),
+    notetype_id=int(os.environ["ANKIWEB_NOTETYPE_ID"]),
+)
+```
+
+Run `venv/bin/python main.py decks` to find a different deck or notetype ID.
+After adding the note, read it back and confirm that the Base64 payload decodes
+to the original bytes. This path bypasses `fields.check()`, so only use HTML
+you construct yourself.
+
+Base64 adds roughly one third to the binary size and embeds a separate copy in
+every note. It is a practical option for an occasional self-contained image,
+not a replacement for Anki's media collection when an asset is large or reused.
+
 ## Card file format
 
 Cards are separated by a line of `===`, and the front and back of a card by a
