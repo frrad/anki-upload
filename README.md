@@ -41,6 +41,117 @@ Instead of credentials you may set `ANKIWEB_AUTH` to an `ankiweb` cookie
 lifted from a logged-in browser. That still works, but only for the
 ankiuser.net editor endpoints; `search` needs a real login.
 
+## Agent plugins
+
+This repository packages the same `skills/anki-notes/SKILL.md` for Claude Code
+and Codex, with product-specific manifests in `.claude-plugin/` and
+`.codex-plugin/`. You can declare it as a project dependency so a fresh
+checkout knows where to find the plugin. The examples below track the `master`
+branch for active development; replace `master` with a release tag or commit
+SHA when you need reproducible deployments.
+
+The installed plugin still needs the normal Python environment and AnkiWeb
+credentials described in [Setup](#setup). Its skill provides the agent-facing
+workflow; `main.py` remains the command-line implementation.
+
+### Claude Code
+
+Commit this as `.claude/settings.json` in the consuming repository. If that
+file already has settings, merge these keys into it rather than replacing the
+file.
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "project-tools": {
+      "source": {
+        "source": "settings",
+        "name": "project-tools",
+        "plugins": [
+          {
+            "name": "anki-upload",
+            "source": {
+              "source": "github",
+              "repo": "frrad/anki-upload",
+              "ref": "master"
+            }
+          }
+        ]
+      },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": {
+    "anki-upload@project-tools": true
+  }
+}
+```
+
+When Claude Code first trusts the project, it prompts before adding the
+marketplace and installing the enabled plugin. This consent step is expected:
+the plugin includes executable helper code and can read and modify AnkiWeb
+notes. With `autoUpdate` enabled, Claude Code checks the `master` branch at
+startup. After an update, run `/reload-plugins` or start a new session to load
+the new copy. See the [Claude Code plugin marketplace documentation](https://code.claude.com/docs/en/plugin-marketplaces)
+and [plugin settings reference](https://code.claude.com/docs/en/settings).
+
+### Codex
+
+Commit this as `.agents/plugins/marketplace.json` in the consuming repository:
+
+```json
+{
+  "name": "project-tools",
+  "interface": {
+    "displayName": "Project tools"
+  },
+  "plugins": [
+    {
+      "name": "anki-upload",
+      "source": {
+        "source": "url",
+        "url": "https://github.com/frrad/anki-upload.git",
+        "ref": "master"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
+```
+
+Repository marketplaces are not discovered implicitly. After committing the
+marketplace file, register the consuming repository's root once, then install
+the plugin using the marketplace's top-level `name` (`project-tools` here):
+
+```sh
+codex plugin marketplace add /absolute/path/to/consuming-repository
+codex plugin add anki-upload@project-tools
+```
+
+Restarting Codex alone does not perform those steps. Verify the result with:
+
+```sh
+codex plugin marketplace list
+codex plugin list
+```
+
+The first command should list `project-tools`; the second should report
+`anki-upload@project-tools` as `installed, enabled`. Start a new Codex task
+after installation because an existing task does not dynamically reload its
+skill inventory.
+
+If the marketplace is already registered and you need to refresh its
+Git-backed snapshot, run `codex plugin marketplace upgrade project-tools`,
+reinstall with `codex plugin add anki-upload@project-tools`, and then start a
+new task. See the [Codex plugin documentation](https://developers.openai.com/plugins/build/plugins).
+
+The skill is intentionally generic. Put consuming-project-specific behavior
+in that project's `AGENTS.md` or `CLAUDE.md`, not in this plugin.
+
 ## Usage
 
 ```sh

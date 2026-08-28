@@ -1,14 +1,13 @@
 ---
 name: anki-notes
-description: "Write AnkiWeb notes and edit existing ones: add a new card to the deck, bulk-import a batch, convert math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when asked to make, add, or create a flashcard or a set of them, and when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the <br>-plus-<pre>-plus-<b> format that satisfies both."
+description: "Write AnkiWeb notes and edit existing ones: add a new card to the deck, bulk-import a batch, convert math to LaTeX that actually renders, and repair markup the web editor has mangled. Use when asked to make, add, or create a flashcard or a set of them, and when a card's formulas show as Unicode pseudo-math (μ, σ², √, x_i), when LaTeX is present but renders as literal source text, or when a card's lines run together on one line after editing. Covers the two competing constraints -- MathJax needs clean text context, Anki needs HTML for line breaks -- and the line-break, code-block, and bold format that satisfies both."
 ---
 
 # Writing and editing AnkiWeb notes
 
-Everything here runs from the `anki-upload` checkout, so `cd
-~/Projects/anki-upload` first; `venv/bin/python main.py` is relative to it.
-Credentials and the default deck come from its `.env`, so no ids need
-passing on the command line.
+Everything here runs from the `anki-upload` plugin root;
+`venv/bin/python main.py` is relative to it. Credentials and the default deck
+come from its `.env`, so no ids need passing on the command line.
 
 ## The core problem
 

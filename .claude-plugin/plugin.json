@@ -1,0 +1,7 @@
+{
+  "name": "anki-upload",
+  "description": "Read, create, and safely edit AnkiWeb notes with agent-guided formatting workflows.",
+  "author": {
+    "name": "Frederick Robinson"
+  }
+}
