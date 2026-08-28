@@ -11,12 +11,50 @@ stable, so expect it to break whenever AnkiWeb changes.
 
 ## Setup
 
+The only runtime prerequisite is [uv](https://docs.astral.sh/uv/), which the
+launcher uses to create and maintain a private virtual environment. Install
+it with the instructions for your platform, then run the checked-in launcher:
+
 ```sh
-python -m venv venv
-venv/bin/pip install -r requirements.txt
+bin/anki-upload doctor
 ```
 
-Create a `.env` (gitignored) with your credentials and the default target:
+The first invocation downloads the runtime dependencies and creates a private
+environment in the persistent anki-upload data directory. Runtime environments
+are keyed by the `uv.lock` contents, under `runtimes/`, so two installed plugin
+versions can run with different dependency sets without replacing one
+another's environment. Nothing is written to the plugin checkout, so
+replacing a Claude Code or Codex plugin snapshot does not remove the runtime or
+your login session. Use `ANKI_UPLOAD_DATA_DIR=/path/to/data` to select an
+explicit state directory (useful for tests or a portable setup). The directory
+and its credentials are created with owner-only permissions.
+
+Configuration and sessions are stored in a named profile below `profiles/`:
+
+```text
+<data directory>/
+├── profiles/
+│   └── default/
+│       ├── .env
+│       └── .anki-session.json
+└── runtimes/
+    └── <uv.lock hash>/
+        └── venv/
+```
+
+The `default` profile is intentionally shared by plugin versions. This means
+updating or replacing a plugin does not require logging in again when it uses
+the same Anki account. To keep separate Anki accounts or deck defaults apart,
+select a profile explicitly for every command in that context:
+
+```sh
+ANKI_UPLOAD_PROFILE=personal bin/anki-upload doctor
+ANKI_UPLOAD_PROFILE=work bin/anki-upload login
+ANKI_UPLOAD_PROFILE=work bin/anki-upload add --field Front=hello --field Back=world
+```
+
+Create the `.env` file in the profile directory reported by `doctor` with your
+credentials and the default target:
 
 ```sh
 ANKIWEB_USERNAME=you@example.com
@@ -28,18 +66,23 @@ ANKIWEB_NOTETYPE_ID=... # note type, e.g. Basic
 Then log in once:
 
 ```sh
-venv/bin/python main.py login
-venv/bin/python main.py decks   # lists deck and notetype ids
+bin/anki-upload login
+bin/anki-upload decks   # lists deck and notetype ids
 ```
 
-`login` caches both session cookies to `.anki-session.json` (gitignored,
-`0600`); your password is never written there. Sessions renew themselves — a
-request that gets a 403 re-authenticates and retries once — so this is a
-one-time step.
+`login` caches both session cookies in the selected profile (the session file
+is `0600`); your password is never written there. Sessions renew themselves —
+a request that gets a 403 re-authenticates and retries once — so this is a
+one-time step per account. Run `bin/anki-upload doctor` at any time to inspect
+the installation and selected profile without revealing credentials.
 
-Instead of credentials you may set `ANKIWEB_AUTH` to an `ankiweb` cookie
-lifted from a logged-in browser. That still works, but only for the
-ankiuser.net editor endpoints; `search` needs a real login.
+Old checkout-local `.env` and `.anki-session.json` files are not migrated or
+read. Configure the selected persistent profile's `.env` (or export the
+username and password in the environment) and run `bin/anki-upload login`. A
+bare `ANKIWEB_AUTH` browser cookie remains available for editor operations, but
+cannot authenticate `search`. Set `ANKI_UPLOAD_DATA_DIR` when a completely
+separate installation—including all profiles and runtimes—is required; profile
+selection then works normally inside that isolated directory.
 
 ## Agent plugins
 
@@ -50,9 +93,9 @@ checkout knows where to find the plugin. The examples below track the `master`
 branch for active development; replace `master` with a release tag or commit
 SHA when you need reproducible deployments.
 
-The installed plugin still needs the normal Python environment and AnkiWeb
+The installed plugin uses the same `bin/anki-upload` launcher and AnkiWeb
 credentials described in [Setup](#setup). Its skill provides the agent-facing
-workflow; `main.py` remains the command-line implementation.
+workflow; the launcher is the supported command-line entry point.
 
 ### Claude Code
 
@@ -156,23 +199,23 @@ in that project's `AGENTS.md` or `CLAUDE.md`, not in this plugin.
 
 ```sh
 # bulk-add from a cards file
-venv/bin/python main.py import examples/cards.txt
-venv/bin/python main.py import examples/cards.txt --dry-run  # parse only
-cat card.txt | venv/bin/python main.py import -              # read stdin
+bin/anki-upload import examples/cards.txt
+bin/anki-upload import examples/cards.txt --dry-run  # parse only
+cat card.txt | bin/anki-upload import -              # read stdin
 
 # single note
-venv/bin/python main.py add --field Front=hello --field Back=world
+bin/anki-upload add --field Front=hello --field Back=world
 
 # read and edit an existing note, by id or by the URL in your browser
-venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
-venv/bin/python main.py get 1758491540484 --field Back > back.txt  # edit, then:
-venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
-venv/bin/python main.py get 1758491540484 --json > note.json       # whole note
-venv/bin/python main.py update 1758491540484 --set Back='new text'
-venv/bin/python main.py update 1758491540484 --tags "numpy indexing"
+bin/anki-upload get https://ankiuser.net/edit/1758491540484
+bin/anki-upload get 1758491540484 --field Back > back.txt  # edit, then:
+bin/anki-upload update 1758491540484 --set-file Back=back.txt
+bin/anki-upload get 1758491540484 --json > note.json       # whole note
+bin/anki-upload update 1758491540484 --set Back='new text'
+bin/anki-upload update 1758491540484 --tags "numpy indexing"
 
 # find notes
-venv/bin/python main.py search 'deck:"ml 2025" tag:numpy'
+bin/anki-upload search 'deck:"ml 2025" tag:numpy'
 ```
 
 `--deck-id` and `--notetype-id` override the values from `.env`.
@@ -195,9 +238,9 @@ to `--set-file`. The trailing newline it adds is the one `--set-file` strips,
 so the round trip is byte-exact:
 
 ```sh
-venv/bin/python main.py get 1758491540484 --field Back > back.txt
+bin/anki-upload get 1758491540484 --field Back > back.txt
 $EDITOR back.txt
-venv/bin/python main.py update 1758491540484 --set-file Back=back.txt
+bin/anki-upload update 1758491540484 --set-file Back=back.txt
 ```
 
 Both `update` and `add` validate before writing and refuse a field that
@@ -250,7 +293,7 @@ also be supplied in the same command; the image is prepended with a blank line
 before the field's existing content:
 
 ```sh
-venv/bin/python main.py add \
+bin/anki-upload add \
   --field-file Front=front.html \
   --field-file Back=back.html \
   --image-file Back=diagram.png

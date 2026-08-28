@@ -1,0 +1,112 @@
+#!/bin/sh
+# Launch the anki-upload script from a plugin checkout or an installed cache.
+#
+# The plugin directory is disposable. uv's environment and all user state are
+# deliberately kept in a stable per-user data directory instead.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PLUGIN_ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "anki-upload requires uv, but uv was not found on PATH." >&2
+    echo "Install it from https://docs.astral.sh/uv/getting-started/installation/ and try again." >&2
+    exit 127
+fi
+
+if [ -n "${ANKI_UPLOAD_DATA_DIR:-}" ]; then
+    DATA_DIR=$ANKI_UPLOAD_DATA_DIR
+elif [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
+    DATA_DIR=${HOME:?}/Library/Application Support/anki-upload
+elif [ -n "${XDG_DATA_HOME:-}" ]; then
+    DATA_DIR=$XDG_DATA_HOME/anki-upload
+elif [ -n "${LOCALAPPDATA:-}" ]; then
+    DATA_DIR=$LOCALAPPDATA/anki-upload
+else
+    DATA_DIR=${HOME:?}/.local/share/anki-upload
+fi
+
+if [ -z "$DATA_DIR" ]; then
+    echo "anki-upload could not determine a data directory; set ANKI_UPLOAD_DATA_DIR." >&2
+    exit 2
+fi
+
+mkdir -p "$DATA_DIR"
+chmod 700 "$DATA_DIR" 2>/dev/null || true
+# Resolve a relative override once, against the caller's original directory,
+# so subsequent runs and the Python process share an unambiguous path.
+DATA_DIR=$(CDPATH= cd -- "$DATA_DIR" && pwd)
+
+# Keep the Python process and the launcher on exactly the same state path.
+export ANKI_UPLOAD_DATA_DIR=$DATA_DIR
+
+# Profiles isolate credentials and sessions while preserving the durable root
+# across disposable plugin checkouts.  Keep this a namespace rather than a
+# path fragment: profile names must never escape DATA_DIR/profiles.
+ANKI_UPLOAD_PROFILE=${ANKI_UPLOAD_PROFILE:-default}
+case "$ANKI_UPLOAD_PROFILE" in
+    ''|[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789]*|*[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-]*)
+        echo "anki-upload: ANKI_UPLOAD_PROFILE must start with a letter or digit and contain only letters, digits, '-' or '_' (maximum 64 characters)." >&2
+        exit 2
+        ;;
+esac
+if [ "${#ANKI_UPLOAD_PROFILE}" -gt 64 ]; then
+    echo "anki-upload: ANKI_UPLOAD_PROFILE must be at most 64 characters." >&2
+    exit 2
+fi
+export ANKI_UPLOAD_PROFILE
+
+PROFILE_DIR=$DATA_DIR/profiles/$ANKI_UPLOAD_PROFILE
+mkdir -p "$PROFILE_DIR"
+chmod 700 "$PROFILE_DIR" 2>/dev/null || true
+
+# Key uv's environment by the complete lockfile digest.  Different plugin
+# versions therefore cannot rewrite or execute in one another's environment;
+# identical lockfiles can safely share one.  Do not silently fall back to a
+# checkout-local environment when hashing is unavailable.
+LOCKFILE=$PLUGIN_ROOT/uv.lock
+if [ ! -f "$LOCKFILE" ]; then
+    echo "anki-upload: lockfile not found: $LOCKFILE" >&2
+    exit 2
+fi
+
+if command -v sha256sum >/dev/null 2>&1; then
+    if ! LOCK_HASH=$(sha256sum "$LOCKFILE" | awk '{print $1}'); then
+        echo "anki-upload: could not hash lockfile: $LOCKFILE" >&2
+        exit 2
+    fi
+elif command -v shasum >/dev/null 2>&1; then
+    if ! LOCK_HASH=$(shasum -a 256 "$LOCKFILE" | awk '{print $1}'); then
+        echo "anki-upload: could not hash lockfile: $LOCKFILE" >&2
+        exit 2
+    fi
+else
+    echo "anki-upload: need sha256sum or shasum to identify the uv.lock runtime." >&2
+    exit 127
+fi
+
+case "$LOCK_HASH" in
+    ''|*[!0123456789abcdefABCDEF]*)
+        echo "anki-upload: invalid SHA-256 digest for lockfile: $LOCKFILE" >&2
+        exit 2
+        ;;
+esac
+if [ "${#LOCK_HASH}" -ne 64 ]; then
+    echo "anki-upload: expected a 64-character SHA-256 digest for: $LOCKFILE" >&2
+    exit 2
+fi
+
+RUNTIME_DIR=$DATA_DIR/runtimes/$LOCK_HASH
+mkdir -p "$RUNTIME_DIR"
+chmod 700 "$RUNTIME_DIR" 2>/dev/null || true
+export ANKI_UPLOAD_RUNTIME_DIR=$RUNTIME_DIR
+export UV_PROJECT_ENVIRONMENT=$RUNTIME_DIR/venv
+
+uv -q sync --locked --project "$PLUGIN_ROOT" --no-dev --no-install-project
+
+# uv run preserves the caller's working directory. Python loads the selected
+# profile's .env explicitly during startup; keeping dotenv loading there also
+# avoids uv's path handling truncating profile paths that contain spaces.
+exec uv -q run --project "$PLUGIN_ROOT" --no-dev --no-sync \
+    python "$PLUGIN_ROOT/main.py" "$@"

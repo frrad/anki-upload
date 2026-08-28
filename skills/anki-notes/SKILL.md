@@ -5,9 +5,22 @@ description: "Write AnkiWeb notes and edit existing ones: add a new card to the 
 
 # Writing and editing AnkiWeb notes
 
-Everything here runs from the `anki-upload` plugin root;
-`venv/bin/python main.py` is relative to it. Credentials and the default deck
-come from its `.env`, so no ids need passing on the command line.
+Everything here runs through `bin/anki-upload`, resolved from the
+`anki-upload` plugin root. The launcher uses `uv` to maintain a private runtime
+environment outside the plugin checkout. Each runtime is keyed by the
+`uv.lock` contents under `runtimes/`, so different installed plugin versions
+cannot overwrite one another's dependencies. Configuration and sessions live
+in the selected persistent profile under `profiles/<name>/`; the `default`
+profile is shared across versions so a plugin update does not require another
+login. On first use, run `bin/anki-upload doctor`.
+
+Use `ANKI_UPLOAD_PROFILE=work` (or another stable name) to keep a separate
+Anki account and deck defaults isolated from the default profile. Use
+`ANKI_UPLOAD_DATA_DIR=/path/to/data` for complete state isolation, including
+all profiles and runtimes. Put credentials and default deck settings in the
+`.env` path that `doctor` reports (or provide them through environment
+variables). This plugin does not migrate old checkout-local `.env` or session
+files.
 
 ## The core problem
 
@@ -136,7 +149,7 @@ exactly as `update` does, so a rejection means the file is wrong.
    bare newline in the file collapses on the card.
 
    ```sh
-   venv/bin/python main.py add --field-file Front=front.txt --field-file Back=back.txt --tags "python stdlib"
+   bin/anki-upload add --field-file Front=front.txt --field-file Back=back.txt --tags "python stdlib"
    ```
 
 2. **For several cards, use a cards file instead.** Cards are separated by a
@@ -150,8 +163,8 @@ exactly as `update` does, so a rejection means the file is wrong.
    `add` -- the difference is real and easy to get backwards.
 
    ```sh
-   venv/bin/python main.py import cards.txt --dry-run   # parse and print only
-   venv/bin/python main.py import cards.txt
+   bin/anki-upload import cards.txt --dry-run   # parse and print only
+   bin/anki-upload import cards.txt
    ```
 
    `--dry-run` is worth running first on anything non-trivial: it shows the
@@ -163,7 +176,7 @@ exactly as `update` does, so a rejection means the file is wrong.
    what you drafted.
 
    ```sh
-   venv/bin/python main.py get <id> --json
+   bin/anki-upload get <id> --json
    ```
 
 4. **Ask the user to confirm it renders**, as with an edit.
@@ -184,7 +197,7 @@ mangle or the quoting will terminate early.
    to diff against.
 
    ```sh
-   venv/bin/python main.py get <url-or-id> --field Back > back.txt
+   bin/anki-upload get <url-or-id> --field Back > back.txt
    cp back.txt back.orig.txt
    ```
 
@@ -200,7 +213,7 @@ mangle or the quoting will terminate early.
 3. **Write it back.**
 
    ```sh
-   venv/bin/python main.py update <url-or-id> --set-file Back=back.txt
+   bin/anki-upload update <url-or-id> --set-file Back=back.txt
    ```
 
    `update` validates before it writes and refuses anything that would not
@@ -213,7 +226,7 @@ mangle or the quoting will terminate early.
    kept. The round trip is exact, so this should be silent:
 
    ```sh
-   venv/bin/python main.py get <url-or-id> --field Back | diff back.orig.txt -
+   bin/anki-upload get <url-or-id> --field Back | diff back.orig.txt -
    ```
 
    `update` also prints only the fields whose value actually changed, so an
@@ -231,8 +244,8 @@ field and typing makes the browser re-wrap content in block elements: it
 will insert `<div>` around everything after the caret and drop `&nbsp;` at
 line ends. This recurs on every manual edit.
 
-So make these edits through `main.py update`, which writes the field value
-directly with no contenteditable in the path. If a card has already been
+So make these edits through `bin/anki-upload update`, which writes the field
+value directly with no contenteditable in the path. If a card has already been
 edited in the browser, its artifacts have to come out by hand: there is no
 script for it. There used to be, and it was deleted for cause -- it stripped
 every tag to compare before against after, so it silently discarded anything
