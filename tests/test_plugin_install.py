@@ -61,10 +61,11 @@ def _copy_plugin(destination: Path) -> None:
 
 def _run_launcher(
     plugin: Path,
-    data_dir: Path,
+    data_dir: Path | None,
     *arguments: str,
     cwd: Path,
     profile: str | None = None,
+    environment_overrides: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     environment = os.environ.copy()
     for name in (
@@ -74,13 +75,19 @@ def _run_launcher(
         "ANKIWEB_PASSWORD",
         "ANKIWEB_SESSION_FILE",
         "ANKIWEB_USERNAME",
+        "ANKI_UPLOAD_DATA_DIR",
         "ANKI_UPLOAD_PROFILE",
+        "LOCALAPPDATA",
         "UV_PROJECT_ENVIRONMENT",
+        "XDG_DATA_HOME",
     ):
         environment.pop(name, None)
-    environment["ANKI_UPLOAD_DATA_DIR"] = str(data_dir)
+    if data_dir is not None:
+        environment["ANKI_UPLOAD_DATA_DIR"] = str(data_dir)
     if profile is not None:
         environment["ANKI_UPLOAD_PROFILE"] = profile
+    if environment_overrides is not None:
+        environment.update(environment_overrides)
     return subprocess.run(
         [str(plugin / "bin/anki-upload"), *arguments],
         cwd=cwd,
@@ -164,6 +171,38 @@ def test_clean_installed_plugin_bootstraps_and_keeps_state_after_replacement(
     assert str(session) in after_replacement.stdout
     assert runtime_before.is_dir()
     assert list((data_dir / "runtimes").glob("*/venv")) == [runtime_before]
+
+
+def test_macos_default_data_directory_supports_spaces_in_home(tmp_path: Path) -> None:
+    """The macOS default data directory must survive shell word splitting."""
+    plugin = tmp_path / "plugin cache" / "anki-upload"
+    caller_dir = tmp_path / "caller"
+    home = tmp_path / "user home with spaces"
+    fake_bin = tmp_path / "fake bin"
+    caller_dir.mkdir()
+    plugin.mkdir(parents=True)
+    home.mkdir()
+    fake_bin.mkdir()
+    _copy_plugin(plugin)
+
+    fake_uname = fake_bin / "uname"
+    fake_uname.write_text("#!/bin/sh\nprintf '%s\\n' Darwin\n", encoding="utf-8")
+    fake_uname.chmod(0o755)
+
+    result = _run_launcher(
+        plugin,
+        None,
+        "doctor",
+        cwd=caller_dir,
+        environment_overrides={
+            "HOME": str(home),
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        },
+    )
+
+    _assert_ok(result)
+    expected_data_dir = home / "Library" / "Application Support" / "anki-upload"
+    assert f"Data directory: {expected_data_dir}" in result.stdout
 
 
 def test_different_plugin_locks_get_isolated_runtimes_and_share_default_profile(

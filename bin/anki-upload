@@ -18,7 +18,7 @@ fi
 if [ -n "${ANKI_UPLOAD_DATA_DIR:-}" ]; then
     DATA_DIR=$ANKI_UPLOAD_DATA_DIR
 elif [ "$(uname -s 2>/dev/null || echo unknown)" = "Darwin" ]; then
-    DATA_DIR=${HOME:?}/Library/Application Support/anki-upload
+    DATA_DIR="${HOME:?}/Library/Application Support/anki-upload"
 elif [ -n "${XDG_DATA_HOME:-}" ]; then
     DATA_DIR=$XDG_DATA_HOME/anki-upload
 elif [ -n "${LOCALAPPDATA:-}" ]; then
