@@ -1,0 +1,28 @@
+{
+  "name": "anki-upload",
+  "version": "0.1.0",
+  "description": "Read, create, and safely edit AnkiWeb notes with agent-guided formatting workflows.",
+  "author": {
+    "name": "Frederick Robinson",
+    "email": "frederick.robinson@frrad.com",
+    "url": "https://github.com/frrad"
+  },
+  "homepage": "https://github.com/frrad/anki-upload",
+  "repository": "https://github.com/frrad/anki-upload",
+  "keywords": ["Anki", "AnkiWeb", "flashcards", "spaced repetition", "education"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Anki Upload",
+    "shortDescription": "Create and edit AnkiWeb notes safely.",
+    "longDescription": "Draft, add, inspect, and repair AnkiWeb notes while preserving MathJax, line breaks, code blocks, and field content.",
+    "developerName": "Frederick Robinson",
+    "category": "Productivity",
+    "capabilities": ["Read AnkiWeb notes", "Write AnkiWeb notes"],
+    "websiteURL": "https://github.com/frrad/anki-upload",
+    "defaultPrompt": [
+      "Draft a new Anki card and add it after I approve it",
+      "Fix the formatting of an existing AnkiWeb note",
+      "Import a batch of Anki cards safely"
+    ]
+  }
+}
