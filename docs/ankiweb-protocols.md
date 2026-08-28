@@ -167,9 +167,9 @@ that maintains a synced local mirror of the collection.
 server-side even though card data never comes back**:
 
 ```sh
-venv/bin/python main.py search 'flag:1'          # notes with a red-flagged card
-venv/bin/python main.py search 'is:suspended'
-venv/bin/python main.py search 'prop:due<7'
+bin/anki-upload search 'flag:1'          # notes with a red-flagged card
+bin/anki-upload search 'is:suspended'
+bin/anki-upload search 'prop:due<7'
 ```
 
 Verified working against AnkiWeb on 2026-08-05, with no code change. The server even

@@ -22,23 +22,97 @@ import json
 import os
 import re
 import stat
+import tempfile
 from dataclasses import dataclass, asdict
 from http.cookiejar import CookieJar
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import betterproto
+from platformdirs import user_data_dir
 import requests
 from dotenv import load_dotenv
-
-load_dotenv()
 
 ANKIWEB = "https://ankiweb.net"
 ANKIUSER = "https://ankiuser.net"
 TIMEOUT_S = 15
-SESSION_PATH = Path(
-    os.getenv("ANKIWEB_SESSION_FILE", Path(__file__).with_name(".anki-session.json"))
+
+
+_PROFILE_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}\Z")
+
+
+def _data_dir() -> Path:
+    """Return the durable per-user directory used by the CLI.
+
+    The launcher sets ``ANKI_UPLOAD_DATA_DIR`` when it needs an isolated
+    location (for example, in tests).  Otherwise platformdirs gives us the
+    normal application-data location: ``~/Library/Application Support`` on
+    macOS, ``$XDG_DATA_HOME``/``anki-upload`` on Linux, and the equivalent
+    Windows location.
+    """
+    override = os.getenv("ANKI_UPLOAD_DATA_DIR")
+    if override:
+        return Path(override).expanduser()
+    return Path(user_data_dir("anki-upload", appauthor=False))
+
+
+def _profile_name() -> str:
+    """Return and validate the profile selected for this invocation.
+
+    Profiles are deliberately a small, portable namespace.  In particular,
+    accepting path separators here would let an environment variable escape
+    ``DATA_DIR/profiles``.
+    """
+    profile = os.getenv("ANKI_UPLOAD_PROFILE", "default")
+    if not _PROFILE_RE.fullmatch(profile):
+        raise ValueError(
+            "ANKI_UPLOAD_PROFILE must be 1-64 characters using only letters, "
+            "digits, '-' or '_'"
+        )
+    return profile
+
+
+DATA_DIR = _data_dir()
+PROFILE = _profile_name()
+PROFILE_DIR = DATA_DIR / "profiles" / PROFILE
+CONFIG_PATH = PROFILE_DIR / ".env"
+
+# Never ask python-dotenv to search from the current working directory.  A
+# plugin checkout may be replaced while the user's working directory remains
+# unchanged, so configuration must come from this stable location only.
+load_dotenv(dotenv_path=CONFIG_PATH, override=False)
+
+_session_override = os.getenv("ANKIWEB_SESSION_FILE")
+SESSION_PATH = (
+    Path(_session_override).expanduser()
+    if _session_override
+    else PROFILE_DIR / ".anki-session.json"
 )
+
+
+def ensure_data_dir() -> Path:
+    """Create the root and selected profile with owner-only permissions."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    DATA_DIR.chmod(0o700)
+    profiles_dir = DATA_DIR / "profiles"
+    profiles_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    profiles_dir.chmod(0o700)
+    PROFILE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    PROFILE_DIR.chmod(0o700)
+    return DATA_DIR
+
+
+def protect_config_file() -> None:
+    """Restrict an existing config file without following symlinks."""
+    try:
+        mode = CONFIG_PATH.lstat()
+    except OSError:
+        return
+    if stat.S_ISREG(mode.st_mode):
+        CONFIG_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
+
+
+protect_config_file()
 USER_AGENT = (
     "Mozilla/5.0 (X11; CrOS x86_64 14541.0.0) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
@@ -170,19 +244,52 @@ class Session:
         if not value:
             other = "ankiweb.net" if host == ANKIWEB else "ankiuser.net"
             raise AnkiAuthError(
-                f"no {other} cookie in this session — run `main.py login` "
+                f"no {other} cookie in this session — run `bin/anki-upload login` "
                 "to obtain both"
             )
         return {"has_auth": "1", "ankiweb": value}
 
-    def save(self, path: Path = SESSION_PATH) -> None:
-        path.write_text(json.dumps(asdict(self), indent=2))
-        path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — these are credentials
+    def save(self, path: Path | None = None) -> None:
+        """Persist this session in a private file, creating its parent safely."""
+        destination = path or SESSION_PATH
+        if path is None and destination.parent == PROFILE_DIR:
+            ensure_data_dir()
+        else:
+            destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # Write beside the destination, set the mode before it becomes
+        # visible, and replace atomically so a refresh cannot leave a partial
+        # cookie file behind.
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=destination.parent,
+            prefix=f".{destination.name}.",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(json.dumps(asdict(self), indent=2))
+        temporary_path.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0600 — credentials
+        temporary_path.replace(destination)
+        destination.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
     @classmethod
-    def load(cls, path: Path = SESSION_PATH) -> Optional["Session"]:
+    def load(cls, path: Path | None = None) -> Optional["Session"]:
+        destination = path or SESSION_PATH
         try:
-            return cls(**json.loads(path.read_text()))
+            payload = json.loads(destination.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                return None
+            session = cls(**payload)
+            if not all(
+                isinstance(value, str)
+                for value in (
+                    session.ankiweb_cookie,
+                    session.ankiuser_cookie,
+                    session.username,
+                )
+            ):
+                return None
+            return session
         except (OSError, ValueError, TypeError):
             return None
 
@@ -259,11 +366,7 @@ _SESSION: Optional[Session] = None
 
 
 def get_session() -> Session:
-    """Resolve a session: cached, then session file, then env credentials.
-
-    Falls back to a bare ANKIWEB_AUTH cookie for the ankiuser.net host only,
-    which is enough for the editor endpoints but not for search.
-    """
+    """Resolve a session: cached, file, env credentials, then auth cookie."""
     global _SESSION
     if _SESSION is not None:
         return _SESSION
@@ -278,14 +381,16 @@ def get_session() -> Session:
         _SESSION.save()
         return _SESSION
 
+    # A bare browser cookie remains useful for the editor endpoints.  It is
+    # intentionally not persisted and cannot authenticate search on ankiweb.
     legacy = os.getenv("ANKIWEB_AUTH")
     if legacy:
         _SESSION = Session(ankiuser_cookie=legacy)
         return _SESSION
 
     raise AnkiAuthError(
-        "not authenticated — run `main.py login`, or set ANKIWEB_USERNAME "
-        "and ANKIWEB_PASSWORD in .env"
+        "not authenticated — run `bin/anki-upload login`, or set "
+        "ANKIWEB_USERNAME and ANKIWEB_PASSWORD in the persistent config file"
     )
 
 
@@ -294,12 +399,13 @@ def set_session(session: Session) -> None:
     _SESSION = session
 
 
-def logout(path: Path = SESSION_PATH) -> bool:
+def logout(path: Path | None = None) -> bool:
     """Forget the stored session. Returns whether a file was removed."""
     global _SESSION
     _SESSION = None
+    destination = path or SESSION_PATH
     try:
-        path.unlink()
+        destination.unlink()
         return True
     except OSError:
         return False
@@ -338,8 +444,9 @@ def _post(path: str, payload: bytes, host: str = ANKIUSER, referer: str = "/") -
 
         if r.status_code == 403:
             raise AnkiAuthError(
-                "403 — session expired. Run `main.py login`, or set "
-                "ANKIWEB_USERNAME/ANKIWEB_PASSWORD in .env to auto-renew."
+                "403 — session expired. Run `bin/anki-upload login`, or set "
+                "ANKIWEB_USERNAME/ANKIWEB_PASSWORD in the persistent config "
+                "file to auto-renew."
             )
         if r.status_code == 404:
             raise AnkiError(

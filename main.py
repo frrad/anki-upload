@@ -1,21 +1,25 @@
 """CLI for reading, editing and bulk-adding AnkiWeb notes.
 
-    ./venv/bin/python main.py login
-    ./venv/bin/python main.py import examples/cards.txt
-    ./venv/bin/python main.py get https://ankiuser.net/edit/1758491540484
-    ./venv/bin/python main.py get 1758491540484 --field Back > back.txt
-    ./venv/bin/python main.py update https://ankiuser.net/edit/1758491540484 \
+    bin/anki-upload login
+    bin/anki-upload import examples/cards.txt
+    bin/anki-upload get https://ankiuser.net/edit/1758491540484
+    bin/anki-upload get 1758491540484 --field Back > back.txt
+    bin/anki-upload update https://ankiuser.net/edit/1758491540484 \
         --set-file Back=back.txt --tags numpy
-    ./venv/bin/python main.py add --field Front=hello --field Back=world
-    ./venv/bin/python main.py add --field-file Front=front.txt \
+    bin/anki-upload add --field Front=hello --field Back=world
+    bin/anki-upload add --field-file Front=front.txt \
         --field-file Back=back.txt --image-file Back=diagram.png
-    ./venv/bin/python main.py search 'deck:"ml 2025" tag:numpy'
-    ./venv/bin/python main.py decks
+    bin/anki-upload search 'deck:"ml 2025" tag:numpy'
+    bin/anki-upload decks
 
 Auth resolves in this order: the cached session file, then
 ANKIWEB_USERNAME/ANKIWEB_PASSWORD from .env (logging in automatically and
 renewing on expiry), then a bare ANKIWEB_AUTH cookie. The last is the
 legacy path and only reaches the ankiuser.net editor endpoints, not search.
+
+Configuration is loaded explicitly from the persistent application data
+directory, never from the current working directory. Use `doctor` to inspect
+paths and authentication state without making a network request.
 """
 
 from __future__ import annotations
@@ -24,6 +28,7 @@ import argparse
 import getpass
 import json
 import os
+import stat
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,9 +37,15 @@ from typing import Callable, Dict, List
 from fields import check, inline_image, to_html
 
 from anki import (
+    CONFIG_PATH,
+    DATA_DIR,
+    PROFILE,
+    PROFILE_DIR,
     SESSION_PATH,
     AnkiError,
+    Session,
     add_note,
+    ensure_data_dir,
     get_decks_and_notetypes,
     get_note,
     login,
@@ -132,7 +143,9 @@ def read_cards_file(path: Path) -> str:
 def require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
-        raise SystemExit(f"{name} is not set (put it in .env)")
+        raise SystemExit(
+            f"{name} is not set (put it in the persistent config file or environment)"
+        )
     return value
 
 
@@ -208,9 +221,7 @@ def cmd_get(args: argparse.Namespace) -> int:
         # adds is the one --set-file strips, so the round trip is exact.
         values = dict(zip(note.field_names, note.field_values))
         if args.field not in values:
-            raise SystemExit(
-                f"no field named {args.field!r}; note has {list(values)}"
-            )
+            raise SystemExit(f"no field named {args.field!r}; note has {list(values)}")
         print(values[args.field])
         return 0
 
@@ -354,6 +365,74 @@ def cmd_logout(args: argparse.Namespace) -> int:
     return 0
 
 
+def _permissions(path: Path) -> str:
+    """Return a stable, non-sensitive permission description for `path`."""
+    try:
+        return f"{stat.S_IMODE(path.stat().st_mode):04o}"
+    except OSError:
+        return "missing"
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    """Report local setup and authentication state without contacting AnkiWeb."""
+    del args
+    ensure_data_dir()
+    config_present = CONFIG_PATH.is_file()
+    username_configured = bool(os.getenv("ANKIWEB_USERNAME"))
+    password_configured = bool(os.getenv("ANKIWEB_PASSWORD"))
+    credentials_configured = username_configured and password_configured
+
+    session_present = SESSION_PATH.is_file()
+    session = Session.load(SESSION_PATH) if session_present else None
+    session_valid = session is not None
+    web_cookie = bool(session and session.ankiweb_cookie)
+    user_cookie = bool(session and session.ankiuser_cookie)
+
+    print(f"Python: {sys.version.split()[0]}")
+    print(f"Python executable: {sys.executable}")
+    print(f"Data directory: {DATA_DIR}")
+    print(f"Data directory permissions: {_permissions(DATA_DIR)} (expected 0700)")
+    print(f"Profile: {PROFILE}")
+    print(f"Profile directory: {PROFILE_DIR}")
+    print(
+        f"Profile directory permissions: {_permissions(PROFILE_DIR)} " "(expected 0700)"
+    )
+    runtime_dir = os.getenv("ANKI_UPLOAD_RUNTIME_DIR")
+    if runtime_dir:
+        print(f"Runtime directory: {runtime_dir}")
+    print(f"Config file: {CONFIG_PATH}")
+    print(
+        f"Config present: {'yes' if config_present else 'no'}"
+        f"; permissions: {_permissions(CONFIG_PATH)} (expected 0600)"
+    )
+    print(
+        "Credentials configured: "
+        f"{'yes' if credentials_configured else 'no'} "
+        "(username and password presence only; values are never displayed)"
+    )
+    print(f"Session file: {SESSION_PATH}")
+    print(
+        f"Session present: {'yes' if session_present else 'no'}"
+        f"; valid: {'yes' if session_valid else 'no'}"
+        f"; permissions: {_permissions(SESSION_PATH)} (expected 0600)"
+    )
+    print(
+        f"Session cookie coverage: ankiweb.net={'yes' if web_cookie else 'no'}, "
+        f"ankiuser.net={'yes' if user_cookie else 'no'}"
+    )
+
+    if not credentials_configured and not (web_cookie and user_cookie):
+        print(
+            "Action: configure ANKIWEB_USERNAME and ANKIWEB_PASSWORD in "
+            f"{CONFIG_PATH}, then run `bin/anki-upload login`."
+        )
+    elif not (web_cookie and user_cookie):
+        print("Action: run `bin/anki-upload login` to create a session.")
+    else:
+        print("Action: local setup looks ready; no network check was performed.")
+    return 0
+
+
 def cmd_search(args: argparse.Namespace) -> int:
     notes = search_notes(args.query)
     if not notes:
@@ -488,6 +567,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     lo = sub.add_parser("logout", help="delete the cached session")
     lo.set_defaults(func=cmd_logout)
+
+    dr = sub.add_parser(
+        "doctor",
+        help="inspect local runtime, configuration, and session state",
+    )
+    dr.set_defaults(func=cmd_doctor)
 
     s = sub.add_parser("search", help="find notes (Anki search syntax)")
     s.add_argument("query", help="e.g. 'deck:\"ml 2025\" tag:foo'")
